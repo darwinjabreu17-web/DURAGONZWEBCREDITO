@@ -1,0 +1,38 @@
+{
+  "name": "duragonz",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.1",
+    "dexie": "^4.4.4",
+    "lucide-react": "^1.24.0",
+    "next": "^14.2.10",
+    "next-pwa": "^5.6.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^3.9.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@netlify/plugin-nextjs": "^5.15.12",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.5.2",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "^14.2.10",
+    "javascript-obfuscator": "^5.5.0",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5",
+    "webpack-obfuscator": "^3.6.1"
+  }
+}

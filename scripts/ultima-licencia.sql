@@ -1,0 +1,1 @@
+insert into licencias (codigo, cliente_nombre, tipo, max_dispositivos, fecha_expiracion, firma, activa, ultimo_mantenimiento) values ('DGZ-BH1XZ5', 'Cliente de Prueba', 'ilimitada', 2, null, 'N4u1FWoY5VQ82UZWYoUbHxOF5xRYOY7eijfyoQDZ6u8Bun/eYn5Biog/uRWVc+DpBERAFxUruwZbj6XHuBWABA==', true, now());
