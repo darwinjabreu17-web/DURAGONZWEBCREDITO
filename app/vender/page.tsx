@@ -1807,6 +1807,88 @@ if (ultimaVenta.cliente_id) {
         </div>
       </div>
 
+      <div style={styles.tablaContainer}>
+        <div style={styles.tablaHeader}>
+          <div style={{ ...styles.col, flex: '0 0 90px' }}>Código</div>
+          <div style={{ ...styles.col, flex: '1' }}>Descripción</div>
+          <div style={{ ...styles.col, flex: '0 0 90px', textAlign: 'center' }}>Stock</div>
+          <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }}>Precio $</div>
+          <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }}>Cantidad</div>
+          <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }}>Importe $</div>
+          <div style={{ ...styles.col, flex: '0 0 55px' }}></div>
+        </div>
+
+        <div style={styles.tablaBody}>
+          {items.length === 0 ? (
+            <div style={styles.tablaVacia}>
+              <p>Presiona <strong>F1</strong> para buscar productos, o escanea un código de barras</p>
+            </div>
+          ) : (
+            items.map((item) => (
+              <div
+                key={item.id}
+                onClick={() => setItemSeleccionadoId(item.id)}
+                style={{
+                  ...styles.tablaRow,
+                  cursor: 'pointer',
+                  backgroundColor: itemSeleccionadoId === item.id ? '#eff6ff' : 'white',
+                  outline: itemSeleccionadoId === item.id ? '2px solid #93c5fd' : 'none',
+                  outlineOffset: '-2px',
+                }}
+              >
+                <div style={{ ...styles.col, flex: '0 0 90px' }}>{item.codigo}</div>
+                <div style={{ ...styles.col, flex: '1' }}>{item.nombre}</div>
+                <div style={{ ...styles.col, flex: '0 0 90px', textAlign: 'center' }}>
+                  <span style={{
+                    backgroundColor: item.stock > 10 ? '#dcfce7' : '#fee2e2',
+                    color: item.stock > 10 ? '#166534' : '#dc2626',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    fontSize: '15px',
+                    fontWeight: '600'
+                  }}>
+                    {item.stock}
+                  </span>
+                </div>
+                <div style={{
+                  ...styles.col,
+                  flex: '0 0 130px',
+                  textAlign: 'right',
+                  fontWeight: '600',
+                  color: (item.precio === item.precio_mayoreo && item.precio_mayoreo > 0) ? '#2563eb' : '#059669'
+                }}>
+                  {item.precio.toFixed(2)}
+                </div>
+                <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="number"
+                    value={item.cantidad}
+                    onChange={(e) => cambiarCantidad(item.id, parseFloat(e.target.value) || 0)}
+                    style={styles.inputCantidad}
+                    step="0.001"
+                    max={item.stock}
+                  />
+                </div>
+                <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right', fontWeight: '600' }}>
+                  {(item.precio * item.cantidad).toFixed(2)}
+                </div>
+                <div style={{ ...styles.col, flex: '0 0 55px', textAlign: 'center' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      eliminarItem(item.id)
+                    }}
+                    style={styles.botonEliminar}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       <div style={styles.footer}>
         <div style={styles.totalContainer}>
           <div>
@@ -3108,7 +3190,6 @@ const styles = {
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #e5e7eb',
     overflow: 'hidden',
-    overflowX: 'auto',
     marginBottom: '14px',
     flex: 1,
     display: 'flex',
