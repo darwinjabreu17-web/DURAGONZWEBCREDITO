@@ -1808,7 +1808,7 @@ if (ultimaVenta.cliente_id) {
       </div>
 
       <div style={styles.tablaContainer}>
-        <div style={styles.tablaHeader}>
+        <div style={{ ...styles.tablaHeader, minWidth: '700px' }}>
           <div style={{ ...styles.col, flex: '0 0 90px' }}>Código</div>
           <div style={{ ...styles.col, flex: '1' }}>Descripción</div>
           <div style={{ ...styles.col, flex: '0 0 90px', textAlign: 'center' }}>Stock</div>
@@ -1817,11 +1817,29 @@ if (ultimaVenta.cliente_id) {
           <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }}>Importe $</div>
           <div style={{ ...styles.col, flex: '0 0 55px' }}></div>
         </div>
-
         <div style={styles.tablaBody}>
           {items.length === 0 ? (
             <div style={styles.tablaVacia}>
               <p>Presiona <strong>F1</strong> para buscar productos, o escanea un código de barras</p>
+              <button
+                onClick={() => {
+                  setMostrarBuscador(true)
+                  setTimeout(() => inputBusquedaRef.current?.focus(), 100)
+                }}
+                style={{
+                  marginTop: '16px',
+                  backgroundColor: '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  padding: '14px 28px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: '16px',
+                }}
+              >
+                🔍 Buscar Producto
+              </button>
             </div>
           ) : (
             items.map((item) => (
@@ -1830,6 +1848,7 @@ if (ultimaVenta.cliente_id) {
                 onClick={() => setItemSeleccionadoId(item.id)}
                 style={{
                   ...styles.tablaRow,
+                  minWidth: '700px',
                   cursor: 'pointer',
                   backgroundColor: itemSeleccionadoId === item.id ? '#eff6ff' : 'white',
                   outline: itemSeleccionadoId === item.id ? '2px solid #93c5fd' : 'none',
