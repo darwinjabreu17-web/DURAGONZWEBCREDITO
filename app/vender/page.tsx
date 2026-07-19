@@ -96,7 +96,20 @@ function obtenerFechaLocal(): string {
 function formatearBs(numero: number): string {
   return new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numero)
 }
-
+// Estilos solo para el botón de buscar en móvil — oculto en PC por defecto,
+  // aparece solo en pantallas angostas gracias al @media query.
+  const estiloBotonBuscarMovil = (
+    <style jsx global>{`
+      .boton-buscar-movil {
+        display: none;
+      }
+      @media (max-width: 768px) {
+        .boton-buscar-movil {
+          display: inline-flex !important;
+        }
+      }
+    `}</style>
+  )
 export default function Vender() {
   const router = useRouter()
 
@@ -1671,6 +1684,7 @@ if (ultimaVenta.cliente_id) {
 
   return (
     <div style={styles.container}>
+    {estiloBotonBuscarMovil}  
     {!conexionDisponible && (
         <div style={{
           padding: '10px 20px',
@@ -1901,6 +1915,16 @@ if (ultimaVenta.cliente_id) {
           </div>
         </div>
         <div style={styles.botonesFooter}>
+        <button
+            onClick={() => {
+              setMostrarBuscador(true)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 100)
+            }}
+            className="boton-buscar-movil"
+            style={{ ...styles.botonCobrar, backgroundColor: '#2563eb' }}
+          >
+            🔍 Buscar Producto
+          </button>
         <button
             onClick={() => setMostrarBuscarTickets(true)}
             style={{ ...styles.botonCancelar, backgroundColor: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
