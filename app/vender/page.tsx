@@ -110,6 +110,16 @@ function formatearBs(numero: number): string {
           flex-direction: column;
           gap: 10px;
           padding: 4px 2px 12px;
+        .botones-footer-movil {
+          flex-wrap: wrap !important;
+        }
+        .boton-oculto-movil {
+          display: none !important;
+        }
+        .boton-cobrar-movil {
+          flex: 1 1 100% !important;
+          order: 10 !important;
+        }
         }
         .tarjeta-item-movil {
           background: white;
@@ -1975,7 +1985,7 @@ if (ultimaVenta.cliente_id) {
             <span style={styles.totalValorBs}>{formatearBs(totalBs)}</span>
           </div>
         </div>
-        <div style={styles.botonesFooter}>
+        <div style={styles.botonesFooter} className="botones-footer-movil">
         <button
             onClick={() => {
               setMostrarBuscador(true)
@@ -1988,12 +1998,14 @@ if (ultimaVenta.cliente_id) {
           </button>
         <button
             onClick={() => setMostrarBuscarTickets(true)}
+            className="boton-oculto-movil"
             style={{ ...styles.botonCancelar, backgroundColor: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
           >
             🔍 Buscar Ticket
           </button>
           <button
             onClick={() => setMostrarGuardarTicket(true)}
+            className="boton-oculto-movil"
             style={{ ...styles.botonCancelar, backgroundColor: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }}
             disabled={items.length === 0}
           >
@@ -2001,6 +2013,7 @@ if (ultimaVenta.cliente_id) {
           </button>
           <button
             onClick={cancelarVenta}
+            className="boton-oculto-movil"
             style={styles.botonCancelar}
             disabled={items.length === 0}
           >
