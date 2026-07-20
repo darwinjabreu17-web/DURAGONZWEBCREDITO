@@ -100,13 +100,31 @@ function formatearBs(numero: number): string {
   // aparece solo en pantallas angostas gracias al @media query.
   const estiloBotonBuscarMovil = (
     <style jsx global>{`
-      .boton-buscar-movil {
-        display: none;
-      }
+      .boton-buscar-movil { display: none; }
+      .carrito-movil { display: none; }
       @media (max-width: 768px) {
-        .boton-buscar-movil {
-          display: inline-flex !important;
+        .boton-buscar-movil { display: inline-flex !important; }
+        .tabla-desktop-pos { display: none !important; }
+        .carrito-movil {
+          display: flex !important;
+          flex-direction: column;
+          gap: 10px;
+          padding: 4px 2px 12px;
         }
+        .tarjeta-item-movil {
+          background: white;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          padding: 14px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .tarjeta-item-movil-nombre { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 2px; }
+        .tarjeta-item-movil-codigo { font-size: 12px; color: #9ca3af; margin-bottom: 10px; }
+        .tarjeta-item-movil-fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .stepper-cantidad { display: flex; align-items: center; background: #f3f4f6; border-radius: 10px; overflow: hidden; }
+        .stepper-boton { width: 38px; height: 38px; border: none; background: #e5e7eb; font-size: 20px; font-weight: 700; color: #374151; cursor: pointer; }
+        .stepper-valor { width: 44px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; }
+        .toggle-mayoreo-movil { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
       }
     `}</style>
   )
@@ -1821,7 +1839,7 @@ if (ultimaVenta.cliente_id) {
         </div>
       </div>
 
-      <div style={styles.tablaContainer}>
+      <div style={styles.tablaContainer} className="tabla-desktop-pos">
         <div style={styles.tablaHeader}>
           <div style={{ ...styles.col, flex: '0 0 90px' }}>Código</div>
           <div style={{ ...styles.col, flex: '1' }}>Descripción</div>
@@ -1902,7 +1920,50 @@ if (ultimaVenta.cliente_id) {
           )}
         </div>
       </div>
-
+<div className="carrito-movil">
+        {items.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#9ca3af', padding: '30px 10px' }}>
+            Toca "Buscar Producto" para agregar artículos
+          </div>
+        ) : (
+          items.map((item) => (
+            <div key={item.id} className="tarjeta-item-movil">
+              <div className="tarjeta-item-movil-nombre">{item.nombre}</div>
+              <div className="tarjeta-item-movil-codigo">{item.codigo} · Stock: {item.stock}</div>
+              <div className="tarjeta-item-movil-fila">
+                <div className="stepper-cantidad">
+                  <button className="stepper-boton" onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>−</button>
+                  <span className="stepper-valor">{item.cantidad}</span>
+                  <button className="stepper-boton" onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>+</button>
+                </div>
+                {puedeAplicarMayoreo && item.precio_mayoreo > 0 && (
+                  <button
+                    className="toggle-mayoreo-movil"
+                    onClick={() => alternarPrecioMayor(item.id)}
+                    style={{
+                      backgroundColor: item.precio === item.precio_mayoreo ? '#2563eb' : '#dbeafe',
+                      color: item.precio === item.precio_mayoreo ? 'white' : '#1d4ed8',
+                    }}
+                  >
+                    {item.precio === item.precio_mayoreo ? '✓ Mayoreo' : 'Mayoreo'}
+                  </button>
+                )}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '17px', fontWeight: 800, color: '#059669' }}>
+                    $ {(item.precio * item.cantidad).toFixed(2)}
+                  </div>
+                  <button
+                    onClick={() => eliminarItem(item.id)}
+                    style={{ background: 'none', border: 'none', color: '#dc2626', fontSize: '13px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
       <div style={styles.footer}>
         <div style={styles.totalContainer}>
           <div>
