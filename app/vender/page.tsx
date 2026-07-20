@@ -110,6 +110,7 @@ function formatearBs(numero: number): string {
           flex-direction: column;
           gap: 10px;
           padding: 4px 2px 12px;
+        }
         .botones-footer-movil {
           flex-wrap: wrap !important;
         }
@@ -119,7 +120,6 @@ function formatearBs(numero: number): string {
         .boton-cobrar-movil {
           flex: 1 1 100% !important;
           order: 10 !important;
-        }
         }
         .tarjeta-item-movil {
           background: white;
@@ -2033,6 +2033,7 @@ if (ultimaVenta.cliente_id) {
               setMostrarCobro(true)
             }}
             style={styles.botonCobrar}
+            className="boton-cobrar-movil"
             disabled={items.length === 0}
           >
             [F12] COBRAR
