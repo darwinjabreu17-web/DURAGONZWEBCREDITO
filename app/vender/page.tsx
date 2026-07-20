@@ -183,7 +183,10 @@ function formatearBs(numero: number): string {
           display: none !important;
         }
         .contenedor-principal-movil {
-          padding-bottom: 90px !important;
+        height: auto !important;
+        min-height: 100vh !important;
+        overflow-y: auto !important;
+        padding-bottom: 90px !important;
         }
         .footer-fijo-movil {
           position: fixed !important;
