@@ -150,23 +150,31 @@ function formatearBs(numero: number): string {
           word-break: break-word;
         }
 
+        .cobro-overlay-mobile {
+          align-items: stretch !important;
+          justify-content: stretch !important;
+          padding: 0 !important;
+        }
         .cobro-modal-mobile {
-          width: 95% !important;
-          max-height: 88vh !important;
+          width: 100% !important;
+          height: 100dvh !important;
+          max-height: 100dvh !important;
+          border-radius: 0 !important;
           overflow-y: auto !important;
         }
         .cobro-grid-mobile {
           grid-template-columns: 1fr !important;
-          padding: 18px !important;
-          gap: 18px !important;
+          padding: 14px 16px !important;
+          gap: 14px !important;
         }
         .cobro-metodos-mobile {
-          grid-template-columns: 1fr !important;
-          gap: 12px !important;
+          grid-template-columns: 1fr 1fr !important;
+          gap: 10px !important;
         }
         .cobro-botones-mobile {
-          grid-template-columns: 1fr !important;
+          grid-template-columns: 1fr 1fr !important;
           gap: 10px !important;
+          padding-top: 16px !important;
         }
       }
     `}</style>
@@ -2357,7 +2365,7 @@ if (ultimaVenta.cliente_id) {
       )}
 
       {mostrarCobro && (
-        <div style={styles.modal}>
+        <div style={styles.modal} className="cobro-overlay-mobile">
           <div style={{
             ...styles.modalContentSmall,
             maxWidth: '900px',
