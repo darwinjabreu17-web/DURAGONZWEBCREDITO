@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { dbLocal } from '@/lib/db-local'
 
 function obtenerFechaLocal(): string {
   const ahora = new Date()
@@ -82,7 +83,15 @@ export default function Dashboard() {
     cargarTasa()
     cargarResumenDashboard()
   }, [])
+useEffect(() => {
+    if (verificandoSesion) return
 
+    cachearParaOffline()
+    const intervalo = setInterval(cachearParaOffline, 30000)
+
+    return () => clearInterval(intervalo)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verificandoSesion])
   async function cargarTasa() {
     const hoy = obtenerFechaLocal()
     const res = await fetch(`/api/tasas-diarias?fecha=${hoy}`)
@@ -108,7 +117,50 @@ export default function Dashboard() {
       console.error('Error cargando resumen del dashboard:', err)
     }
   }
+// Refresca en segundo plano la caché offline (productos y clientes) que
+  // usa el módulo de Vender, para que si se corta la luz/internet estando
+  // en el Dashboard, al entrar a Vender ya haya datos recientes guardados
+  // y no aparezca "sin conexión" por falta de caché.
+  async function cachearParaOffline() {
+    try {
+      const resProductos = await fetch('/api/productos')
+      const { data: productosData } = await resProductos.json()
+      if (productosData && productosData.length > 0) {
+        await dbLocal.productosCache.bulkPut(
+          productosData.map((p: any) => ({
+            id: p.id,
+            nombre: p.nombre,
+            precio_detalle: p.precio,
+            precio_mayor: p.precio_mayoreo,
+            stock: p.stock,
+          }))
+        )
+      }
 
+      const resClientes = await fetch('/api/clientes')
+      const { clientes: clientesData, saldos: saldosData } = await resClientes.json()
+      if (clientesData && clientesData.length > 0) {
+        const mapaSaldos: Record<number, number> = {}
+        ;(saldosData || []).forEach((s: any) => {
+          mapaSaldos[s.cliente_id] = Number(s.saldo_usd)
+        })
+        await dbLocal.clientesCache.bulkPut(
+          clientesData.map((c: any) => ({
+            id: c.id,
+            nombre: c.nombre,
+            cedula_rif: c.cedula_rif,
+            tipo_credito: c.tipo_credito,
+            monto_limite: c.monto_limite,
+            saldo_usd: mapaSaldos[c.id] || 0,
+          }))
+        )
+      }
+    } catch (err) {
+      // Si falla (por ejemplo ya no hay internet), simplemente no se
+      // actualiza la caché en este ciclo; se reintenta en el próximo.
+      console.error('Error cacheando datos offline desde el Dashboard:', err)
+    }
+  }
   async function guardarNuevoPrecio() {
     const hoy = obtenerFechaLocal()
     const valorNumerico = parseFloat(nuevoPrecio)

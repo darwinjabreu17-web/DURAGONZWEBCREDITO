@@ -51,6 +51,10 @@ export default function NuevoProducto() {
   const [stockMinimo, setStockMinimo] = useState('5')
   const [guardando, setGuardando] = useState(false)
 
+  // Estados para las "pildoritas" de porcentaje
+  const [porcentajeDetalle, setPorcentajeDetalle] = useState('')
+  const [porcentajeMayoreo, setPorcentajeMayoreo] = useState('')
+
   // Se ejecuta al salir del campo "Precio Detalle": si escribieron un %,
   // lo convierte al monto final usando el precio de costo actual.
   const manejarBlurPrecio = () => {
@@ -65,6 +69,24 @@ export default function NuevoProducto() {
     const costo = parseFloat(precioCosto) || 0
     const resultado = resolverPrecioDesdeTexto(precioMayoreo, costo)
     setPrecioMayoreo(resultado.toString())
+  }
+
+  // Aplica el % escrito en la pildorita al campo de Precio Detalle
+  const aplicarPorcentajeDetalle = () => {
+    if (!porcentajeDetalle) return
+    const costo = parseFloat(precioCosto) || 0
+    const pct = parseFloat(porcentajeDetalle) || 0
+    const resultado = costo + (costo * pct / 100)
+    setPrecio(resultado.toFixed(2))
+  }
+
+  // Aplica el % escrito en la pildorita al campo de Precio Mayoreo
+  const aplicarPorcentajeMayoreo = () => {
+    if (!porcentajeMayoreo) return
+    const costo = parseFloat(precioCosto) || 0
+    const pct = parseFloat(porcentajeMayoreo) || 0
+    const resultado = costo + (costo * pct / 100)
+    setPrecioMayoreo(resultado.toFixed(2))
   }
 
   // Enter también dispara el cálculo (sin enviar el formulario de una vez)
@@ -115,6 +137,8 @@ export default function NuevoProducto() {
     setPrecioMayoreo('')
     setStock('')
     setStockMinimo('5')
+    setPorcentajeDetalle('')
+    setPorcentajeMayoreo('')
     setGuardando(false)
 
     router.push('/dashboard')
@@ -193,32 +217,62 @@ export default function NuevoProducto() {
 
             <div style={styles.campoForm}>
               <label style={styles.label}>Precio Detalle ($) *</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00 o 30%"
-                value={precio}
-                onChange={(e) => setPrecio(e.target.value)}
-                onBlur={manejarBlurPrecio}
-                onKeyDown={(e) => manejarEnterPrecio(e, 'detalle')}
-                style={styles.inputForm}
-                required
-              />
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00 o 30%"
+                  value={precio}
+                  onChange={(e) => setPrecio(e.target.value)}
+                  onBlur={manejarBlurPrecio}
+                  onKeyDown={(e) => manejarEnterPrecio(e, 'detalle')}
+                  style={styles.inputForm}
+                  required
+                />
+                <div style={styles.pildoraPorcentaje}>
+                  <input
+                    type="number"
+                    placeholder="%"
+                    value={porcentajeDetalle}
+                    onChange={(e) => setPorcentajeDetalle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarPorcentajeDetalle() } }}
+                    style={styles.inputPorcentaje}
+                  />
+                  <button type="button" onClick={aplicarPorcentajeDetalle} style={styles.botonAplicarPorcentaje}>
+                    %
+                  </button>
+                </div>
+              </div>
               <span style={styles.ayudaCampo}>Escribe un monto o un % sobre el costo (ej. 30%)</span>
             </div>
 
             <div style={styles.campoForm}>
               <label style={styles.label}>Precio Mayoreo ($)</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00 o 20%"
-                value={precioMayoreo}
-                onChange={(e) => setPrecioMayoreo(e.target.value)}
-                onBlur={manejarBlurPrecioMayoreo}
-                onKeyDown={(e) => manejarEnterPrecio(e, 'mayoreo')}
-                style={styles.inputForm}
-              />
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00 o 20%"
+                  value={precioMayoreo}
+                  onChange={(e) => setPrecioMayoreo(e.target.value)}
+                  onBlur={manejarBlurPrecioMayoreo}
+                  onKeyDown={(e) => manejarEnterPrecio(e, 'mayoreo')}
+                  style={styles.inputForm}
+                />
+                <div style={styles.pildoraPorcentaje}>
+                  <input
+                    type="number"
+                    placeholder="%"
+                    value={porcentajeMayoreo}
+                    onChange={(e) => setPorcentajeMayoreo(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); aplicarPorcentajeMayoreo() } }}
+                    style={styles.inputPorcentaje}
+                  />
+                  <button type="button" onClick={aplicarPorcentajeMayoreo} style={styles.botonAplicarPorcentaje}>
+                    %
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div style={styles.campoForm}>
@@ -362,6 +416,34 @@ const styles = {
     fontSize: '11px',
     color: '#9ca3af',
     marginTop: '4px'
+  },
+  pildoraPorcentaje: {
+    display: 'flex',
+    alignItems: 'center',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    overflow: 'hidden',
+    backgroundColor: '#f9fafb',
+    flexShrink: 0
+  },
+  inputPorcentaje: {
+    width: '48px',
+    border: 'none',
+    outline: 'none',
+    padding: '10px 4px',
+    fontSize: '13px',
+    textAlign: 'center' as const,
+    backgroundColor: 'transparent'
+  },
+  botonAplicarPorcentaje: {
+    border: 'none',
+    borderLeft: '1px solid #e5e7eb',
+    backgroundColor: '#eef2ff',
+    color: '#4338ca',
+    fontWeight: '700' as const,
+    fontSize: '13px',
+    padding: '0 10px',
+    cursor: 'pointer'
   },
   botonGuardar: {
     backgroundColor: '#2563eb',
