@@ -154,6 +154,12 @@ useEffect(() => {
             saldo_usd: mapaSaldos[c.id] || 0,
           }))
         )
+
+        // Además de la lista y el saldo, cacheamos el detalle de ventas
+        // y abonos a crédito de cada cliente, para que el módulo de
+        // Clientes y Créditos pueda mostrar el estado de cuenta completo
+        // aunque no haya internet.
+        await cachearMovimientosCredito(clientesData)
       }
     } catch (err) {
       // Si falla (por ejemplo ya no hay internet), simplemente no se
@@ -161,6 +167,63 @@ useEffect(() => {
       console.error('Error cacheando datos offline desde el Dashboard:', err)
     }
   }
+
+  // Recorre cada cliente, trae sus ventas a crédito (no anuladas) y los
+  // abonos hechos a esas ventas, y los guarda en la caché local. Se hace
+  // en cada ciclo de 30 segundos junto con el resto de la caché offline.
+  async function cachearMovimientosCredito(clientesData: any[]) {
+    try {
+      const ventasParaCache: any[] = []
+      const abonosParaCache: any[] = []
+
+      for (const c of clientesData) {
+        const resVentas = await fetch(`/api/ventas?cliente_id=${c.id}&credito=true`)
+        const { data: ventas } = await resVentas.json()
+        const ventasList = ((ventas || []) as any[]).filter((v) => !v.anulada)
+
+        ventasList.forEach((v) => {
+          ventasParaCache.push({
+            id: v.id,
+            cliente_id: c.id,
+            pago_credito_usd: Number(v.pago_credito_usd),
+            created_at: v.created_at,
+            anulada: !!v.anulada,
+          })
+        })
+
+        if (ventasList.length > 0) {
+          const idsVentas = ventasList.map((v) => v.id)
+          const resAbonos = await fetch(`/api/creditos-abonos?venta_ids=${idsVentas.join(',')}`)
+          const { data: abonos } = await resAbonos.json()
+
+          ;((abonos || []) as any[]).forEach((a) => {
+            abonosParaCache.push({
+              id: a.id,
+              venta_id: a.venta_id,
+              cliente_id: c.id,
+              total_abono_usd: Number(a.total_abono_usd),
+              created_at: a.created_at,
+            })
+          })
+        }
+      }
+
+      // Se reemplaza toda la caché de movimientos con lo recién traído,
+      // para que ventas/abonos anulados o eliminados no queden "pegados".
+      await dbLocal.ventasCreditoCache.clear()
+      if (ventasParaCache.length > 0) {
+        await dbLocal.ventasCreditoCache.bulkPut(ventasParaCache)
+      }
+
+      await dbLocal.abonosCreditoCache.clear()
+      if (abonosParaCache.length > 0) {
+        await dbLocal.abonosCreditoCache.bulkPut(abonosParaCache)
+      }
+    } catch (err) {
+      console.error('Error cacheando movimientos de crédito offline:', err)
+    }
+  }
+
   async function guardarNuevoPrecio() {
     const hoy = obtenerFechaLocal()
     const valorNumerico = parseFloat(nuevoPrecio)

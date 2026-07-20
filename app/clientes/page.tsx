@@ -1,6 +1,7 @@
 'use client';
 import { Fragment, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { dbLocal } from '@/lib/db-local';
 import { Cliente, SaldoCliente, TipoCredito, VentaCredito, AbonoCredito, MovimientoEstadoCuenta } from '@/lib/types';
 
 type MetodoAbono = 'efectivo_usd' | 'efectivo_bs' | 'tarjeta' | 'transferencia' | 'biopago';
@@ -36,6 +37,11 @@ export default function ClientesPage() {
   const [cargando, setCargando] = useState(true);
   const [pestaña, setPestaña] = useState<'nuevo' | 'editar'>('nuevo');
 
+  // ----- Modo sin conexión: cuando no se puede llegar al servidor, se
+  // muestran los clientes y saldos guardados en la caché local (dbLocal),
+  // que el Dashboard va actualizando cada 30 segundos mientras hay internet -----
+  const [estaOffline, setEstaOffline] = useState(false);
+
   // ----- Vista en pantallas angostas (celular / tablet en vertical):
   // solo se muestra un panel a la vez, controlado por estas pestañas -----
   const [vistaMovil, setVistaMovil] = useState<'lista' | 'datos' | 'cuenta'>('lista');
@@ -67,10 +73,16 @@ export default function ClientesPage() {
 
   useEffect(() => {
     async function cargarTasa() {
-      const hoy = obtenerFechaLocal();
-      const res = await fetch(`/api/tasas-diarias?fecha=${hoy}`);
-      const { data } = await res.json();
-      if (data) setTasaHoy(Number(data.valor));
+      try {
+        const hoy = obtenerFechaLocal();
+        const res = await fetch(`/api/tasas-diarias?fecha=${hoy}`);
+        const { data } = await res.json();
+        if (data) setTasaHoy(Number(data.valor));
+      } catch (err) {
+        // Sin internet no se puede cargar la tasa del día; los abonos en
+        // Bs quedarán bloqueados hasta que vuelva la conexión.
+        console.error('No se pudo cargar la tasa del día:', err);
+      }
     }
     cargarTasa();
   }, []);
@@ -95,7 +107,8 @@ export default function ClientesPage() {
   const inputStyle = { padding: '9px 10px', border: '1px solid #d1d5db', borderRadius: '8px', width: '100%', boxSizing: 'border-box' as const, fontSize: '13px' };
 
   // ---------------------------------------------------------
-  // Cargar clientes + saldos (vista saldo_clientes)
+  // Cargar clientes + saldos (vista saldo_clientes). Si falla por falta
+  // de internet, cae automáticamente a la caché local guardada offline.
   // ---------------------------------------------------------
   async function cargarClientes() {
     setCargando(true);
@@ -104,7 +117,7 @@ export default function ClientesPage() {
       const res = await fetch('/api/clientes');
       const { clientes: clientesData, saldos: saldosData, error } = await res.json();
 
-      if (error) console.error(error);
+      if (error) throw new Error(error);
 
       setClientes((clientesData as Cliente[]) || []);
 
@@ -113,11 +126,46 @@ export default function ClientesPage() {
         mapaSaldos[s.cliente_id] = s;
       });
       setSaldos(mapaSaldos);
+      setEstaOffline(false);
     } catch (err) {
-      console.error(err);
+      console.error('No se pudo cargar clientes del servidor, usando caché offline:', err);
+      await cargarClientesDesdeCache();
     }
 
     setCargando(false);
+  }
+
+  // Reconstruye la lista de clientes y saldos a partir de la caché local
+  // que el Dashboard guarda cada 30 segundos, para poder seguir viendo
+  // los clientes y su deuda aunque se haya cortado el internet o la luz.
+  async function cargarClientesDesdeCache() {
+    try {
+      const clientesCache = await dbLocal.clientesCache.toArray();
+
+      const clientesReconstruidos = clientesCache.map((c) => ({
+        id: c.id,
+        cedula_rif: c.cedula_rif,
+        nombre: c.nombre,
+        telefono: '',
+        direccion: '',
+        tipo_credito: c.tipo_credito,
+        monto_limite: c.monto_limite,
+      })) as Cliente[];
+
+      const mapaSaldos: Record<number, SaldoCliente> = {};
+      clientesCache.forEach((c) => {
+        mapaSaldos[c.id] = { cliente_id: c.id, saldo_usd: c.saldo_usd } as SaldoCliente;
+      });
+
+      setClientes(clientesReconstruidos);
+      setSaldos(mapaSaldos);
+      setEstaOffline(true);
+    } catch (err) {
+      console.error('Error cargando clientes desde la caché offline:', err);
+      setClientes([]);
+      setSaldos({});
+      setEstaOffline(true);
+    }
   }
 
   useEffect(() => {
@@ -150,45 +198,110 @@ export default function ClientesPage() {
   }
 
   async function cargarEstadoCuenta(clienteId: number) {
-    setCargandoMovimientos(true);
-
-    const resVentas = await fetch(`/api/ventas?cliente_id=${clienteId}&credito=true`);
-    const { data: ventas, error: errVentas } = await resVentas.json();
-
-    if (errVentas) console.error(errVentas);
-
-    const ventasList = (ventas as VentaCredito[]) || [];
-    setVentasCredito(ventasList.filter((v) => !v.anulada));
-
-    let abonosList: AbonoCredito[] = [];
-    if (ventasList.length > 0) {
-      const idsVentas = ventasList.map((v) => v.id);
-      const resAbonos = await fetch(`/api/creditos-abonos?venta_ids=${idsVentas.join(',')}`);
-      const { data: abonos, error: errAbonos } = await resAbonos.json();
-
-      if (errAbonos) console.error(errAbonos);
-      abonosList = (abonos as AbonoCredito[]) || [];
+    // Sin conexión, el detalle de ventas y abonos se lee de la caché
+    // local que el Dashboard guarda cada 30 segundos, en vez de intentar
+    // el fetch al servidor.
+    if (estaOffline) {
+      await cargarEstadoCuentaDesdeCache(clienteId);
+      return;
     }
 
-    const combinados: MovimientoEstadoCuenta[] = [
-      ...ventasList.map((v) => ({
-        fecha: v.created_at,
-        tipo: 'venta' as const,
-        folio: v.id,
-        descripcion: `Venta #${v.id}`,
-        monto: Number(v.pago_credito_usd),
-        anulada: v.anulada,
-      })),
-      ...abonosList.map((a) => ({
-        fecha: a.created_at,
-        tipo: 'abono' as const,
-        folio: a.venta_id,
-        descripcion: `Abono a venta #${a.venta_id}`,
-        monto: -Number(a.total_abono_usd),
-      })),
-    ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+    setCargandoMovimientos(true);
 
-    setMovimientos(combinados);
+    try {
+      const resVentas = await fetch(`/api/ventas?cliente_id=${clienteId}&credito=true`);
+      const { data: ventas, error: errVentas } = await resVentas.json();
+
+      if (errVentas) throw new Error(errVentas);
+
+      const ventasList = (ventas as VentaCredito[]) || [];
+      setVentasCredito(ventasList.filter((v) => !v.anulada));
+
+      let abonosList: AbonoCredito[] = [];
+      if (ventasList.length > 0) {
+        const idsVentas = ventasList.map((v) => v.id);
+        const resAbonos = await fetch(`/api/creditos-abonos?venta_ids=${idsVentas.join(',')}`);
+        const { data: abonos, error: errAbonos } = await resAbonos.json();
+
+        if (errAbonos) throw new Error(errAbonos);
+        abonosList = (abonos as AbonoCredito[]) || [];
+      }
+
+      const combinados: MovimientoEstadoCuenta[] = [
+        ...ventasList.map((v) => ({
+          fecha: v.created_at,
+          tipo: 'venta' as const,
+          folio: v.id,
+          descripcion: `Venta #${v.id}`,
+          monto: Number(v.pago_credito_usd),
+          anulada: v.anulada,
+        })),
+        ...abonosList.map((a) => ({
+          fecha: a.created_at,
+          tipo: 'abono' as const,
+          folio: a.venta_id,
+          descripcion: `Abono a venta #${a.venta_id}`,
+          monto: -Number(a.total_abono_usd),
+        })),
+      ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+
+      setMovimientos(combinados);
+    } catch (err) {
+      console.error('No se pudo cargar el estado de cuenta (sin conexión):', err);
+      setEstaOffline(true);
+      setVentasCredito([]);
+      setMovimientos([]);
+    }
+
+    setCargandoMovimientos(false);
+  }
+
+  // Reconstruye el estado de cuenta (ventas + abonos) de un cliente a
+  // partir de lo que el Dashboard guardó en la caché local mientras había
+  // internet. No incluye el detalle de productos de cada venta, solo los
+  // montos, ya que eso no se cachea.
+  async function cargarEstadoCuentaDesdeCache(clienteId: number) {
+    setCargandoMovimientos(true);
+
+    try {
+      const ventasCache = await dbLocal.ventasCreditoCache.where('cliente_id').equals(clienteId).toArray();
+      const abonosCache = await dbLocal.abonosCreditoCache.where('cliente_id').equals(clienteId).toArray();
+
+      const ventasList = ventasCache.map((v) => ({
+        id: v.id,
+        cliente_id: v.cliente_id,
+        pago_credito_usd: v.pago_credito_usd,
+        created_at: v.created_at,
+        anulada: v.anulada,
+      })) as unknown as VentaCredito[];
+
+      setVentasCredito(ventasList);
+
+      const combinados: MovimientoEstadoCuenta[] = [
+        ...ventasList.map((v) => ({
+          fecha: v.created_at,
+          tipo: 'venta' as const,
+          folio: v.id,
+          descripcion: `Venta #${v.id}`,
+          monto: Number(v.pago_credito_usd),
+          anulada: v.anulada,
+        })),
+        ...abonosCache.map((a) => ({
+          fecha: a.created_at,
+          tipo: 'abono' as const,
+          folio: a.venta_id,
+          descripcion: `Abono a venta #${a.venta_id}`,
+          monto: -Number(a.total_abono_usd),
+        })),
+      ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+
+      setMovimientos(combinados);
+    } catch (err) {
+      console.error('Error leyendo el estado de cuenta desde la caché offline:', err);
+      setVentasCredito([]);
+      setMovimientos([]);
+    }
+
     setCargandoMovimientos(false);
   }
 
@@ -202,13 +315,26 @@ export default function ClientesPage() {
 
     if (itemsPorVenta[ventaId]) return;
 
+    // El detalle de productos de cada venta no se guarda en la caché
+    // offline (solo los montos totales), así que sin conexión no se
+    // puede consultar; se deja la lista vacía con un aviso.
+    if (estaOffline) {
+      setItemsPorVenta((prev) => ({ ...prev, [ventaId]: [] }));
+      return;
+    }
+
     setCargandoItems(ventaId);
-    const res = await fetch(`/api/venta-items?venta_id=${ventaId}`);
-    const { data, error } = await res.json();
+    try {
+      const res = await fetch(`/api/venta-items?venta_id=${ventaId}`);
+      const { data, error } = await res.json();
 
-    if (error) console.error(error);
+      if (error) console.error(error);
 
-    setItemsPorVenta((prev) => ({ ...prev, [ventaId]: data || [] }));
+      setItemsPorVenta((prev) => ({ ...prev, [ventaId]: data || [] }));
+    } catch (err) {
+      console.error('No se pudo cargar el detalle de productos (sin conexión):', err);
+      setItemsPorVenta((prev) => ({ ...prev, [ventaId]: [] }));
+    }
     setCargandoItems(null);
   }
 
@@ -234,6 +360,11 @@ export default function ClientesPage() {
   // Guardar (crear o actualizar) cliente
   // ---------------------------------------------------------
   async function guardarCliente() {
+    if (estaOffline) {
+      alert('No hay conexión a internet. No se pueden crear ni editar clientes sin conexión.');
+      return;
+    }
+
     if (!nombre.trim()) {
       alert('El nombre es obligatorio');
       return;
@@ -288,6 +419,12 @@ export default function ClientesPage() {
   // ---------------------------------------------------------
   async function eliminarCliente() {
     if (!clienteSeleccionado) return;
+
+    if (estaOffline) {
+      alert('No hay conexión a internet. No se pueden eliminar clientes sin conexión.');
+      return;
+    }
+
     const confirmar = confirm(`¿Eliminar a ${clienteSeleccionado.nombre}?`);
     if (!confirmar) return;
 
@@ -308,6 +445,12 @@ export default function ClientesPage() {
   // ---------------------------------------------------------
   async function registrarAbono() {
     if (!clienteSeleccionado) return;
+
+    if (estaOffline) {
+      alert('No hay conexión a internet. Los abonos no se pueden registrar sin conexión.');
+      return;
+    }
+
     if (!ventaAbono) {
       alert('Selecciona a qué venta se aplica el abono');
       return;
@@ -390,6 +533,13 @@ export default function ClientesPage() {
 
   return (
     <div className="page">
+      {/* ---------- Aviso de sin conexión ---------- */}
+      {estaOffline && (
+        <div className="avisoOffline">
+          📡 Sin conexión — mostrando clientes y saldos guardados. No se pueden crear, editar clientes ni registrar abonos hasta que vuelva el internet.
+        </div>
+      )}
+
       {/* ---------- Barra superior ---------- */}
       <div className="topbar">
         <h1 className="titulo">Clientes y Créditos</h1>
@@ -525,9 +675,9 @@ export default function ClientesPage() {
 
           <div className="accionesForm">
             {clienteSeleccionado ? (
-              <button style={btnEliminar} onClick={eliminarCliente}>Eliminar</button>
+              <button style={btnEliminar} onClick={eliminarCliente} disabled={estaOffline}>Eliminar</button>
             ) : <span />}
-            <button style={btnPrimario} onClick={guardarCliente} disabled={guardando}>
+            <button style={btnPrimario} onClick={guardarCliente} disabled={guardando || estaOffline}>
               {guardando ? 'Guardando...' : clienteSeleccionado ? 'Guardar Cambios' : 'Crear Cliente'}
             </button>
           </div>
@@ -546,11 +696,17 @@ export default function ClientesPage() {
                 <button
                   style={btnSecundario}
                   onClick={() => setMostrarAbono(!mostrarAbono)}
-                  disabled={ventasCredito.length === 0}
+                  disabled={ventasCredito.length === 0 || estaOffline}
+                  title={estaOffline ? 'No se pueden registrar abonos sin conexión' : ''}
                 >
                   Abonar a deuda
                 </button>
               </div>
+              {estaOffline && (
+                <div className="mensajeVacio" style={{ padding: '6px 0', color: '#92400e' }}>
+                  📡 Mostrando datos guardados sin conexión. El detalle de productos por venta no está disponible offline, y no se pueden registrar abonos nuevos.
+                </div>
+              )}
 
               {ventasCredito.length === 0 && (
                 <div className="mensajeVacio">
@@ -703,6 +859,15 @@ export default function ClientesPage() {
           background-color: #f9fafb;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           overflow: hidden;
+        }
+        .avisoOffline {
+          flex-shrink: 0;
+          background-color: #fef3c7;
+          color: #92400e;
+          font-size: 12px;
+          font-weight: 600;
+          padding: 8px 16px;
+          text-align: center;
         }
         .topbar {
           flex-shrink: 0;
