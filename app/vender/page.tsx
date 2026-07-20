@@ -176,6 +176,23 @@ function formatearBs(numero: number): string {
           gap: 10px !important;
           padding-top: 16px !important;
         }
+        .info-header-movil {
+          display: none !important;
+        }
+        .estado-vacio-movil {
+          display: none !important;
+        }
+        .contenedor-principal-movil {
+          padding-bottom: 90px !important;
+        }
+        .footer-fijo-movil {
+          position: fixed !important;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          z-index: 50;
+          border-radius: 0 !important;
+        }
       }
     `}</style>
   )
@@ -1752,7 +1769,7 @@ if (ultimaVenta.cliente_id) {
   }
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="contenedor-principal-movil">
     {estiloBotonBuscarMovil}  
     {!conexionDisponible && (
         <div style={{
@@ -1865,7 +1882,7 @@ if (ultimaVenta.cliente_id) {
             <span style={styles.tasaLabel}>Tasa BCV</span>
             <span style={styles.tasaValor}>Bs {formatearBs(tasaDolar)}</span>
           </div>
-          <div style={styles.atajosContainer}>
+          <div style={styles.atajosContainer} className="info-header-movil">
             <span style={styles.atajoChip}>
               <span style={styles.atajoTecla}>F1</span>
               Buscar
@@ -1973,7 +1990,7 @@ if (ultimaVenta.cliente_id) {
       </div>
 <div className="carrito-movil">
         {items.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#9ca3af', padding: '30px 10px' }}>
+          <div className="estado-vacio-movil" style={{ textAlign: 'center', color: '#9ca3af', padding: '30px 10px' }}>
             Toca "Buscar Producto" para agregar artículos
           </div>
         ) : (
