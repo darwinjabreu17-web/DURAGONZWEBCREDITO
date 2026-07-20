@@ -135,6 +135,39 @@ function formatearBs(numero: number): string {
         .stepper-boton { width: 38px; height: 38px; border: none; background: #e5e7eb; font-size: 20px; font-weight: 700; color: #374151; cursor: pointer; }
         .stepper-valor { width: 44px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; }
         .toggle-mayoreo-movil { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+        .footer-movil {
+          flex-direction: column !important;
+          align-items: stretch !important;
+          gap: 12px !important;
+        }
+        .total-container-movil {
+          justify-content: space-between !important;
+          gap: 12px !important;
+        }
+        .total-valor-movil {
+          font-size: 22px !important;
+          word-break: break-word;
+        }
+
+        .cobro-modal-mobile {
+          width: 95% !important;
+          max-height: 88vh !important;
+          overflow-y: auto !important;
+        }
+        .cobro-grid-mobile {
+          grid-template-columns: 1fr !important;
+          padding: 18px !important;
+          gap: 18px !important;
+        }
+        .cobro-metodos-mobile {
+          grid-template-columns: 1fr !important;
+          gap: 12px !important;
+        }
+        .cobro-botones-mobile {
+          grid-template-columns: 1fr !important;
+          gap: 10px !important;
+        }
       }
     `}</style>
   )
@@ -1974,15 +2007,15 @@ if (ultimaVenta.cliente_id) {
           ))
         )}
       </div>
-      <div style={styles.footer}>
-        <div style={styles.totalContainer}>
+      <div style={styles.footer} className="footer-movil">
+        <div style={styles.totalContainer} className="total-container-movil">
           <div>
             <span style={styles.totalLabel}>TOTAL $</span>
-            <span style={styles.totalValor}>{totalDolares.toFixed(2)}</span>
+            <span style={styles.totalValor} className="total-valor-movil">{totalDolares.toFixed(2)}</span>
           </div>
           <div>
             <span style={styles.totalLabel}>TOTAL Bs</span>
-            <span style={styles.totalValorBs}>{formatearBs(totalBs)}</span>
+            <span style={styles.totalValorBs} className="total-valor-movil">{formatearBs(totalBs)}</span>
           </div>
         </div>
         <div style={styles.botonesFooter} className="botones-footer-movil">
@@ -2334,8 +2367,8 @@ if (ultimaVenta.cliente_id) {
             background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
             border: '1px solid #e2e8f0',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
-          }}>
-            <div style={{
+          }} className="cobro-modal-mobile">
+          <div style={{
               ...styles.modalHeader,
               padding: '18px 24px',
               background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
@@ -2358,7 +2391,7 @@ if (ultimaVenta.cliente_id) {
 
             {/* Contenido: todo en una sola vista, sin scroll. Columna izquierda con
                 el total y el cliente, columna derecha con los métodos de pago en grilla. */}
-            <div style={{ padding: '28px 32px', display: 'grid', gridTemplateColumns: '260px 1fr', gap: '28px' }}>
+            <div style={{ padding: '28px 32px', display: 'grid', gridTemplateColumns: '260px 1fr', gap: '28px' }} className="cobro-grid-mobile">
 
               {/* ---------- Columna izquierda: total + cliente + restante ---------- */}
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '20px' }}>
@@ -2499,7 +2532,7 @@ if (ultimaVenta.cliente_id) {
 
               {/* ---------- Columna derecha: métodos de pago en grilla, todos visibles ---------- */}
               <div style={{ display: 'flex', flexDirection: 'column' as const }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '18px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '18px' }} className="cobro-metodos-mobile">
                   <div>
                     <label style={styles.labelElegante}>💵 Efectivo Bs</label>
                     <input
@@ -2595,7 +2628,7 @@ if (ultimaVenta.cliente_id) {
                   </div>
                 )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: 'auto', paddingTop: '28px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: 'auto', paddingTop: '28px' }} className="cobro-botones-mobile">
                   <button
                     onClick={() => confirmarVenta(true)}
                     style={{
