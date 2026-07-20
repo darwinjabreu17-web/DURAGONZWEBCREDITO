@@ -163,6 +163,73 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sesion])
 
+  // Estilos solo para pantallas angostas (celulares y tablets) — no afectan la vista de PC.
+  const estiloDashboardMovil = (
+    <style jsx global>{`
+      @media (max-width: 768px) {
+        .dashboard-container-mobil {
+          padding: 14px !important;
+        }
+        .dashboard-header-mobil {
+          padding: 16px 18px !important;
+          flex-direction: column !important;
+          align-items: flex-start !important;
+          gap: 14px !important;
+        }
+        .dashboard-header-mobil > div:last-child {
+          width: 100% !important;
+          justify-content: space-between !important;
+        }
+        .dashboard-titulo-mobil {
+          font-size: 21px !important;
+        }
+        .dashboard-resumen-mobil {
+          grid-template-columns: 1fr 1fr !important;
+          gap: 10px !important;
+          margin-bottom: 20px !important;
+        }
+        .dashboard-card-resumen-mobil {
+          padding: 12px !important;
+          flex-direction: column !important;
+          align-items: flex-start !important;
+          gap: 8px !important;
+        }
+        .dashboard-card-resumen-mobil .dashboard-card-icono-mobil {
+          width: 38px !important;
+          height: 38px !important;
+          font-size: 18px !important;
+        }
+        .dashboard-card-resumen-mobil .dashboard-card-valor-mobil {
+          font-size: 18px !important;
+        }
+        .dashboard-card-led-mobil {
+          grid-column: 1 / -1 !important;
+          padding: 14px !important;
+        }
+        .dashboard-led-texto-mobil {
+          font-size: 14px !important;
+        }
+        .dashboard-menu-mobil {
+          grid-template-columns: 1fr 1fr !important;
+          gap: 12px !important;
+        }
+        .dashboard-boton-menu-mobil {
+          padding: 20px 10px !important;
+          gap: 8px !important;
+        }
+        .dashboard-icono-boton-mobil {
+          font-size: 30px !important;
+        }
+        .dashboard-texto-boton-mobil {
+          font-size: 12px !important;
+        }
+        .dashboard-atajo-badge-mobil {
+          display: none !important;
+        }
+      }
+    `}</style>
+  )
+
   if (verificandoSesion) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
@@ -175,7 +242,8 @@ export default function Dashboard() {
   const hayStockBajo = productosStockBajo.length > 0
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="dashboard-container-mobil">
+      {estiloDashboardMovil}
       <style>{`
         @keyframes desplazarLed {
           0% { transform: translateX(0); }
@@ -208,9 +276,9 @@ export default function Dashboard() {
         }
       `}</style>
 
-      <div style={styles.header}>
+      <div style={styles.header} className="dashboard-header-mobil">
         <div>
-          <h1 style={styles.titulo}>DURAGONZ V1.0</h1>
+          <h1 style={styles.titulo} className="dashboard-titulo-mobil">DURAGONZ V1.0</h1>
           <p style={styles.subtitulo}>
             Sistema de Gestión {sesion && `— Hola, ${sesion.nombre || sesion.username} (${esAdmin ? 'Administrador' : 'Empleado'})`}
           </p>
@@ -242,12 +310,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div style={styles.resumenContainer}>
-        <div className="dz-tarjeta-resumen" style={styles.cardResumen}>
-          <div style={{...styles.cardIcono, background: 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)'}}><span>💵</span></div>
+      <div style={styles.resumenContainer} className="dashboard-resumen-mobil">
+        <div className="dz-tarjeta-resumen dashboard-card-resumen-mobil" style={styles.cardResumen}>
+          <div style={{...styles.cardIcono, background: 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)'}} className="dashboard-card-icono-mobil"><span>💵</span></div>
           <div>
             <p style={styles.cardLabel}>Última Venta</p>
-            <p style={styles.cardValor}>
+            <p style={styles.cardValor} className="dashboard-card-valor-mobil">
               {ultimaVenta ? `$ ${ultimaVenta.total_usd.toFixed(2)}` : '—'}
             </p>
             {ultimaVenta && (
@@ -256,11 +324,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="dz-tarjeta-resumen" style={styles.cardResumen}>
-          <div style={{...styles.cardIcono, background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)'}}><span>⏳</span></div>
+        <div className="dz-tarjeta-resumen dashboard-card-resumen-mobil" style={styles.cardResumen}>
+          <div style={{...styles.cardIcono, background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)'}} className="dashboard-card-icono-mobil"><span>⏳</span></div>
           <div>
             <p style={styles.cardLabel}>Última Venta a Crédito</p>
-            <p style={styles.cardValor}>
+            <p style={styles.cardValor} className="dashboard-card-valor-mobil">
               {ultimaVentaCredito ? `$ ${(ultimaVentaCredito.pago_credito_usd || 0).toFixed(2)}` : '—'}
             </p>
             {ultimaVentaCredito && (
@@ -272,7 +340,7 @@ export default function Dashboard() {
         </div>
 
         {/* ---------- Letrero LED de stock bajo, estilo cartelería digital ---------- */}
-        <div style={styles.cardLed}>
+        <div style={styles.cardLed} className="dashboard-card-led-mobil">
           <div style={styles.ledHeader}>
             {hayStockBajo && <span className="dz-punto-alerta" />}
             <span style={styles.ledHeaderTexto}>STOCK BAJO</span>
@@ -285,27 +353,27 @@ export default function Dashboard() {
             {hayStockBajo ? (
               <div style={styles.ledFade}>
                 <div style={styles.ledTicker}>
-                  <span style={styles.ledTexto}>{textoTicker}{'   •   '}{textoTicker}</span>
+                  <span style={styles.ledTexto} className="dashboard-led-texto-mobil">{textoTicker}{'   •   '}{textoTicker}</span>
                 </div>
               </div>
             ) : (
-              <span style={{...styles.ledTexto, paddingLeft: '10px', opacity: 0.75}}>SIN PRODUCTOS EN STOCK BAJO</span>
+              <span style={{...styles.ledTexto, paddingLeft: '10px', opacity: 0.75}} className="dashboard-led-texto-mobil">SIN PRODUCTOS EN STOCK BAJO</span>
             )}
           </div>
         </div>
       </div>
 
-      <div style={styles.menuGrid}>
+      <div style={styles.menuGrid} className="dashboard-menu-mobil">
         {botones.map((boton) => (
           <button
             key={boton.ruta}
-            className="dz-boton-menu"
+            className="dz-boton-menu dashboard-boton-menu-mobil"
             style={{...styles.botonMenu, borderTop: `4px solid ${boton.color}`}}
             onClick={() => router.push(boton.ruta)}
           >
-            <span style={{...styles.atajoBadge, backgroundColor: boton.color}}>{boton.atajo}</span>
-            <span style={{...styles.iconoBoton, color: boton.color}}>{boton.icono}</span>
-            <span style={styles.textoBoton}>{boton.nombre}</span>
+            <span style={{...styles.atajoBadge, backgroundColor: boton.color}} className="dashboard-atajo-badge-mobil">{boton.atajo}</span>
+            <span style={{...styles.iconoBoton, color: boton.color}} className="dashboard-icono-boton-mobil">{boton.icono}</span>
+            <span style={styles.textoBoton} className="dashboard-texto-boton-mobil">{boton.nombre}</span>
           </button>
         ))}
       </div>
