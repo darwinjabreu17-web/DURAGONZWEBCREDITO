@@ -83,6 +83,7 @@ export default function UsuariosPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [permisos, setPermisos] = useState<Record<string, boolean>>({});
+  const [verPassword, setVerPassword] = useState(false);
 
   // ---- Protección: solo administradores entran aquí ----
   useEffect(() => {
@@ -126,6 +127,7 @@ export default function UsuariosPage() {
     setUsername('');
     setPassword('');
     setPermisos({});
+    setVerPassword(false);
   }
 
   function seleccionarUsuario(u: Usuario) {
@@ -134,6 +136,7 @@ export default function UsuariosPage() {
     setUsername(u.username || '');
     setPassword(u.password || '');
     setPermisos(u.permisos || {});
+    setVerPassword(false);
   }
 
   function togglePermiso(clave: string) {
@@ -300,7 +303,32 @@ export default function UsuariosPage() {
             <input style={inputStyle} placeholder="Nombre completo" value={nombre} onChange={(e) => setNombre(e.target.value)} />
             <input style={inputStyle} placeholder="Usuario" value={username} onChange={(e) => setUsername(e.target.value)} />
           </div>
-          <input style={{ ...inputStyle, marginBottom: '10px' }} placeholder={usuarioSeleccionado ? 'Nueva contraseña (vacío = no cambia)' : 'Contraseña'} value={password} onChange={(e) => setPassword(e.target.value)} />
+
+          <div style={{ position: 'relative', marginBottom: '10px' }}>
+            <input
+              style={{ ...inputStyle, paddingRight: '45px' }}
+              type={verPassword ? 'text' : 'password'}
+              placeholder={usuarioSeleccionado ? 'Nueva contraseña (vacío = no cambia)' : 'Contraseña'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setVerPassword(!verPassword)}
+              style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '17px',
+              }}
+            >
+              {verPassword ? '🙈' : '👁️'}
+            </button>
+          </div>
 
           {usuarioSeleccionado?.rol === 'admin' ? (
             <div style={{ color: '#6b7280', fontSize: '16px', marginBottom: '10px' }}>

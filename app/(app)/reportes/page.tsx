@@ -1,9 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 
-// Devuelve la fecha de HOY usando la hora local del navegador (no UTC).
 function obtenerFechaLocal(): string {
   const ahora = new Date();
   const año = ahora.getFullYear();
@@ -12,7 +10,6 @@ function obtenerFechaLocal(): string {
   return `${año}-${mes}-${dia}`;
 }
 
-// Formatea un monto en bolívares como 10.913,72 (punto para miles, coma para decimales)
 function formatearBs(numero: number): string {
   return new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numero);
 }
@@ -28,7 +25,6 @@ interface Sesion {
 export default function ReportesPage() {
   const router = useRouter();
 
-  // ---- Protección: exige sesión y permiso 'ver_reporte' (o admin) ----
   const [sesion, setSesion] = useState<Sesion | null>(null);
   const [verificandoSesion, setVerificandoSesion] = useState(true);
 
@@ -63,6 +59,8 @@ export default function ReportesPage() {
 
   const [fecha, setFecha] = useState(obtenerFechaLocal());
   const [cargando, setCargando] = useState(false);
+  const [cargandoReporte, setCargandoReporte] = useState(false);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [listaVentas, setListaVentas] = useState<any[]>([]);
   const [listaAbonos, setListaAbonos] = useState<any[]>([]);
   const [totales, setTotales] = useState({
@@ -76,7 +74,6 @@ export default function ReportesPage() {
     tarjeta_en_usd: 0,
     biopago: 0,
     biopago_en_usd: 0,
-    credito: 0,
     ganancia_usd: 0,
     ganancia_bs: 0,
     abonos_usd: 0,
@@ -86,119 +83,131 @@ export default function ReportesPage() {
   useEffect(() => {
     if (verificandoSesion) return;
 
+    const controller = new AbortController();
+
     async function obtenerDatos() {
-      const res = await fetch(`/api/reportes?fecha=${fecha}`);
-      const { ventas: ventasApi, abonos: abonosApi, error: errorReporte } = await res.json();
+      setCargandoReporte(true);
+      setErrorCarga(null);
+      try {
+        const res = await fetch(`/api/reportes?fecha=${fecha}`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Error del servidor (${res.status})`);
 
-      if (errorReporte) { console.error('Error cargando reporte:', errorReporte); }
+        const { ventas: ventasApi, abonos: abonosApi, error: errorReporte } = await res.json();
 
-      const ventas = ventasApi || [];
-      const abonos = abonosApi || [];
+        if (errorReporte) {
+          console.error('Error cargando reporte:', errorReporte);
+          setErrorCarga('No se pudo cargar el reporte. Intenta de nuevo.');
+          return;
+        }
 
-      setListaVentas(ventas);
-      setListaAbonos(abonos);
+        const ventas = ventasApi || [];
+        const abonos = abonosApi || [];
 
-      // --- Totales que vienen de ventas nuevas del día ---
-      const calcVentas = ventas.reduce((acc: any, i: any) => {
-        const efectivoUsd = Number(i.pago_efectivo_usd || 0);
-        const efectivoBs = Number(i.pago_efectivo_bs || 0);
-        const transfBs = Number(i.pago_transferencia || 0);
-        const tarjetaBs = Number(i.pago_tarjeta || 0);
-        const biopagoBs = Number(i.pago_biopago || 0);
-        const tasaVenta = Number(i.tasa_dolar || 0);
-        const gananciaUsdVenta = Number(i.ganancia_usd || 0);
-        const totalVentaUsd = Number(i.total_usd || 0);
-        const creditoUsd = Number(i.pago_credito_usd || 0);
+        setListaVentas(ventas);
+        setListaAbonos(abonos);
 
-        const efectivoBsEnUsd = tasaVenta > 0 ? efectivoBs / tasaVenta : 0;
-        const efectivoUsdEnBs = efectivoUsd * tasaVenta;
-        const transfEnUsd = tasaVenta > 0 ? transfBs / tasaVenta : 0;
-        const tarjetaEnUsd = tasaVenta > 0 ? tarjetaBs / tasaVenta : 0;
-        const biopagoEnUsd = tasaVenta > 0 ? biopagoBs / tasaVenta : 0;
+        // --- Totales que vienen de ventas de contado nuevas del día ---
+        // Ya no hay crédito mezclado en ventas: toda la ganancia de la
+        // venta se reconoce de una vez, no hay fracción pendiente de cobro.
+        const calcVentas = ventas.reduce((acc: any, i: any) => {
+          const efectivoUsd = Number(i.pago_efectivo_usd || 0);
+          const efectivoBs = Number(i.pago_efectivo_bs || 0);
+          const transfBs = Number(i.pago_transferencia || 0);
+          const tarjetaBs = Number(i.pago_tarjeta || 0);
+          const biopagoBs = Number(i.pago_biopago || 0);
+          const tasaVenta = Number(i.tasa_dolar || 0);
+          const gananciaUsdVenta = Number(i.ganancia_usd || 0);
 
-        const fraccionCobrada = totalVentaUsd > 0 ? (totalVentaUsd - creditoUsd) / totalVentaUsd : 1;
-        const gananciaCobradaUsd = gananciaUsdVenta * fraccionCobrada;
+          const efectivoBsEnUsd = tasaVenta > 0 ? efectivoBs / tasaVenta : 0;
+          const efectivoUsdEnBs = efectivoUsd * tasaVenta;
+          const transfEnUsd = tasaVenta > 0 ? transfBs / tasaVenta : 0;
+          const tarjetaEnUsd = tasaVenta > 0 ? tarjetaBs / tasaVenta : 0;
+          const biopagoEnUsd = tasaVenta > 0 ? biopagoBs / tasaVenta : 0;
 
-        acc.efectivo_usd += efectivoUsd;
-        acc.efectivo_bs += efectivoBs;
-        acc.efectivo_bs_en_usd += efectivoBsEnUsd;
-        acc.efectivo_usd_en_bs += efectivoUsdEnBs;
-        acc.transf += transfBs;
-        acc.transf_en_usd += transfEnUsd;
-        acc.tarjeta += tarjetaBs;
-        acc.tarjeta_en_usd += tarjetaEnUsd;
-        acc.biopago += biopagoBs;
-        acc.biopago_en_usd += biopagoEnUsd;
-        acc.credito += creditoUsd;
-        acc.ganancia_usd += gananciaCobradaUsd;
-        acc.ganancia_bs += gananciaCobradaUsd * tasaVenta;
-        return acc;
-      }, {
-        efectivo_usd: 0, efectivo_bs: 0, efectivo_bs_en_usd: 0, efectivo_usd_en_bs: 0,
-        transf: 0, transf_en_usd: 0, tarjeta: 0, tarjeta_en_usd: 0,
-        biopago: 0, biopago_en_usd: 0, credito: 0,
-        ganancia_usd: 0, ganancia_bs: 0,
-      });
+          acc.efectivo_usd += efectivoUsd;
+          acc.efectivo_bs += efectivoBs;
+          acc.efectivo_bs_en_usd += efectivoBsEnUsd;
+          acc.efectivo_usd_en_bs += efectivoUsdEnBs;
+          acc.transf += transfBs;
+          acc.transf_en_usd += transfEnUsd;
+          acc.tarjeta += tarjetaBs;
+          acc.tarjeta_en_usd += tarjetaEnUsd;
+          acc.biopago += biopagoBs;
+          acc.biopago_en_usd += biopagoEnUsd;
+          acc.ganancia_usd += gananciaUsdVenta;
+          acc.ganancia_bs += gananciaUsdVenta * tasaVenta;
+          return acc;
+        }, {
+          efectivo_usd: 0, efectivo_bs: 0, efectivo_bs_en_usd: 0, efectivo_usd_en_bs: 0,
+          transf: 0, transf_en_usd: 0, tarjeta: 0, tarjeta_en_usd: 0,
+          biopago: 0, biopago_en_usd: 0,
+          ganancia_usd: 0, ganancia_bs: 0,
+        });
 
-      // --- Totales que vienen de abonos a crédito recibidos hoy ---
-      const calcAbonos = abonos.reduce((acc: any, a: any) => {
-        const efectivoUsd = Number(a.abono_efectivo_usd || 0);
-        const efectivoBs = Number(a.abono_efectivo_bs || 0);
-        const transfBs = Number(a.abono_transferencia || 0);
-        const tarjetaBs = Number(a.abono_tarjeta || 0);
-        const biopagoBs = Number(a.abono_biopago || 0);
-        const tasaAbono = Number(a.tasa_dolar || 0);
-        const totalAbonoUsd = Number(a.total_abono_usd || 0);
+        // --- Totales que vienen de pagos de crédito (abonos o pago total) ---
+        // ganancia_usd y monto_usd ya vienen calculados por la función SQL
+        // aplicar_pago_credito, con el precio/costo vigente al momento del pago.
+        const calcAbonos = abonos.reduce((acc: any, a: any) => {
+          const efectivoUsd = Number(a.abono_efectivo_usd || 0);
+          const efectivoBs = Number(a.abono_efectivo_bs || 0);
+          const transfBs = Number(a.abono_transferencia || 0);
+          const tarjetaBs = Number(a.abono_tarjeta || 0);
+          const biopagoBs = Number(a.abono_biopago || 0);
+          const tasaAbono = Number(a.tasa_dolar || 0);
+          const totalAbonoUsd = Number(a.monto_usd || 0);
+          const gananciaAbonoUsd = Number(a.ganancia_usd || 0);
 
-        const venta = a.ventas;
-        const gananciaVentaUsd = Number(venta?.ganancia_usd || 0);
-        const totalVentaUsd = Number(venta?.total_usd || 0);
+          acc.efectivo_usd += efectivoUsd;
+          acc.efectivo_bs += efectivoBs;
+          acc.efectivo_bs_en_usd += tasaAbono > 0 ? efectivoBs / tasaAbono : 0;
+          acc.efectivo_usd_en_bs += efectivoUsd * tasaAbono;
+          acc.transf += transfBs;
+          acc.transf_en_usd += tasaAbono > 0 ? transfBs / tasaAbono : 0;
+          acc.tarjeta += tarjetaBs;
+          acc.tarjeta_en_usd += tasaAbono > 0 ? tarjetaBs / tasaAbono : 0;
+          acc.biopago += biopagoBs;
+          acc.biopago_en_usd += tasaAbono > 0 ? biopagoBs / tasaAbono : 0;
+          acc.ganancia_usd += gananciaAbonoUsd;
+          acc.ganancia_bs += gananciaAbonoUsd * tasaAbono;
+          acc.abonos_usd += totalAbonoUsd;
+          acc.abonos_ganancia_usd += gananciaAbonoUsd;
+          return acc;
+        }, {
+          efectivo_usd: 0, efectivo_bs: 0, efectivo_bs_en_usd: 0, efectivo_usd_en_bs: 0,
+          transf: 0, transf_en_usd: 0, tarjeta: 0, tarjeta_en_usd: 0,
+          biopago: 0, biopago_en_usd: 0,
+          ganancia_usd: 0, ganancia_bs: 0,
+          abonos_usd: 0, abonos_ganancia_usd: 0,
+        });
 
-        const margenPorDolar = totalVentaUsd > 0 ? gananciaVentaUsd / totalVentaUsd : 0;
-        const gananciaLiberadaUsd = margenPorDolar * totalAbonoUsd;
-
-        acc.efectivo_usd += efectivoUsd;
-        acc.efectivo_bs += efectivoBs;
-        acc.efectivo_bs_en_usd += tasaAbono > 0 ? efectivoBs / tasaAbono : 0;
-        acc.efectivo_usd_en_bs += efectivoUsd * tasaAbono;
-        acc.transf += transfBs;
-        acc.transf_en_usd += tasaAbono > 0 ? transfBs / tasaAbono : 0;
-        acc.tarjeta += tarjetaBs;
-        acc.tarjeta_en_usd += tasaAbono > 0 ? tarjetaBs / tasaAbono : 0;
-        acc.biopago += biopagoBs;
-        acc.biopago_en_usd += tasaAbono > 0 ? biopagoBs / tasaAbono : 0;
-        acc.ganancia_usd += gananciaLiberadaUsd;
-        acc.ganancia_bs += gananciaLiberadaUsd * tasaAbono;
-        acc.abonos_usd += totalAbonoUsd;
-        acc.abonos_ganancia_usd += gananciaLiberadaUsd;
-        return acc;
-      }, {
-        efectivo_usd: 0, efectivo_bs: 0, efectivo_bs_en_usd: 0, efectivo_usd_en_bs: 0,
-        transf: 0, transf_en_usd: 0, tarjeta: 0, tarjeta_en_usd: 0,
-        biopago: 0, biopago_en_usd: 0,
-        ganancia_usd: 0, ganancia_bs: 0,
-        abonos_usd: 0, abonos_ganancia_usd: 0,
-      });
-
-      setTotales({
-        efectivo_usd: calcVentas.efectivo_usd + calcAbonos.efectivo_usd,
-        efectivo_bs: calcVentas.efectivo_bs + calcAbonos.efectivo_bs,
-        efectivo_bs_en_usd: calcVentas.efectivo_bs_en_usd + calcAbonos.efectivo_bs_en_usd,
-        efectivo_usd_en_bs: calcVentas.efectivo_usd_en_bs + calcAbonos.efectivo_usd_en_bs,
-        transf: calcVentas.transf + calcAbonos.transf,
-        transf_en_usd: calcVentas.transf_en_usd + calcAbonos.transf_en_usd,
-        tarjeta: calcVentas.tarjeta + calcAbonos.tarjeta,
-        tarjeta_en_usd: calcVentas.tarjeta_en_usd + calcAbonos.tarjeta_en_usd,
-        biopago: calcVentas.biopago + calcAbonos.biopago,
-        biopago_en_usd: calcVentas.biopago_en_usd + calcAbonos.biopago_en_usd,
-        credito: calcVentas.credito,
-        ganancia_usd: calcVentas.ganancia_usd + calcAbonos.ganancia_usd,
-        ganancia_bs: calcVentas.ganancia_bs + calcAbonos.ganancia_bs,
-        abonos_usd: calcAbonos.abonos_usd,
-        abonos_ganancia_usd: calcAbonos.abonos_ganancia_usd,
-      });
+        setTotales({
+          efectivo_usd: calcVentas.efectivo_usd + calcAbonos.efectivo_usd,
+          efectivo_bs: calcVentas.efectivo_bs + calcAbonos.efectivo_bs,
+          efectivo_bs_en_usd: calcVentas.efectivo_bs_en_usd + calcAbonos.efectivo_bs_en_usd,
+          efectivo_usd_en_bs: calcVentas.efectivo_usd_en_bs + calcAbonos.efectivo_usd_en_bs,
+          transf: calcVentas.transf + calcAbonos.transf,
+          transf_en_usd: calcVentas.transf_en_usd + calcAbonos.transf_en_usd,
+          tarjeta: calcVentas.tarjeta + calcAbonos.tarjeta,
+          tarjeta_en_usd: calcVentas.tarjeta_en_usd + calcAbonos.tarjeta_en_usd,
+          biopago: calcVentas.biopago + calcAbonos.biopago,
+          biopago_en_usd: calcVentas.biopago_en_usd + calcAbonos.biopago_en_usd,
+          ganancia_usd: calcVentas.ganancia_usd + calcAbonos.ganancia_usd,
+          ganancia_bs: calcVentas.ganancia_bs + calcAbonos.ganancia_bs,
+          abonos_usd: calcAbonos.abonos_usd,
+          abonos_ganancia_usd: calcAbonos.abonos_ganancia_usd,
+        });
+      } catch (e: any) {
+        if (e.name !== 'AbortError') {
+          console.error('Error obteniendo el reporte:', e);
+          setErrorCarga('No se pudo cargar el reporte. Revisa tu conexión e intenta de nuevo.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setCargandoReporte(false);
+      }
     }
+
     obtenerDatos();
+    return () => controller.abort();
   }, [fecha, verificandoSesion]);
 
   const totalEnBs = totales.efectivo_bs + totales.transf + totales.tarjeta + totales.biopago;
@@ -214,47 +223,57 @@ export default function ReportesPage() {
       return;
     }
     setCargando(true);
-    const res = await fetch('/api/reportes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fecha: fecha,
-        total_ventas_usd: totalVentasUsd,
-        total_ventas_bs: totalVentasBs,
-        total_pendientes_usd: totales.credito,
-        total_ingresos_efectivo_usd: totales.efectivo_usd,
-        total_efectivo_bs: totales.efectivo_bs,
-        total_transf: totales.transf,
-        total_tarjeta: totales.tarjeta,
-        total_biopago: totales.biopago,
-        total_ganancia_usd: gananciaUsd,
-        total_ganancia_bs: gananciaBs,
-      }),
-    });
-    const { error } = await res.json();
+    try {
+      const res = await fetch('/api/reportes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fecha: fecha,
+          total_ventas_usd: totalVentasUsd,
+          total_ventas_bs: totalVentasBs,
+          total_ingresos_efectivo_usd: totales.efectivo_usd,
+          total_efectivo_bs: totales.efectivo_bs,
+          total_transf: totales.transf,
+          total_tarjeta: totales.tarjeta,
+          total_biopago: totales.biopago,
+          total_ganancia_usd: gananciaUsd,
+          total_ganancia_bs: gananciaBs,
+        }),
+      });
 
-    if (error) { alert("Error al guardar: " + error); setCargando(false); return; }
+      if (!res.ok) throw new Error(`Error del servidor (${res.status})`);
 
-    const ticket = window.open('', '_blank', 'width=400,height=600');
-    if (ticket) {
-      const lineaGanancia = puedeVerGanancia
-        ? `<p><strong>Ganancia Neta del Día: $${gananciaUsd.toFixed(2)} (Bs${formatearBs(gananciaBs)})</strong></p>`
-        : '';
-      ticket.document.write(`<html><body><h3>CIERRE: ${fecha}</h3>
-        <p>Efectivo USD: $${totales.efectivo_usd.toFixed(2)}</p>
-        <p>Efectivo Bs: Bs${formatearBs(totales.efectivo_bs)} (≈ $${totales.efectivo_bs_en_usd.toFixed(2)})</p>
-        <p>Transf: Bs${formatearBs(totales.transf)} (≈ $${totales.transf_en_usd.toFixed(2)})</p>
-        <p>Tarjeta: Bs${formatearBs(totales.tarjeta)} (≈ $${totales.tarjeta_en_usd.toFixed(2)})</p>
-        <p>Biopago: Bs${formatearBs(totales.biopago)} (≈ $${totales.biopago_en_usd.toFixed(2)})</p>
-        <p>Crédito generado hoy (pendiente de cobro): $${totales.credito.toFixed(2)}</p>
-        <p>Abonos a crédito recibidos hoy: $${totales.abonos_usd.toFixed(2)} (incluidos arriba)</p>
-        <hr/>
-        <p><strong>Total en Bs: Bs${formatearBs(totalEnBs)} (≈ $${totalEnBsUsd.toFixed(2)})</strong></p>
-        <p><strong>Total Ventas del día: $${totalVentasUsd.toFixed(2)} (Bs${formatearBs(totalVentasBs)})</strong></p>
-        ${lineaGanancia}
-        <button onclick="window.print()">Imprimir Ticket</button></body></html>`);
+      const { error } = await res.json();
+
+      if (error) {
+        alert('Error al guardar: ' + error);
+        return;
+      }
+
+      const ticket = window.open('', '_blank', 'width=400,height=600');
+      if (ticket) {
+        const lineaGanancia = puedeVerGanancia
+          ? `<p><strong>Ganancia Neta del Día: $${gananciaUsd.toFixed(2)} (Bs${formatearBs(gananciaBs)})</strong></p>`
+          : '';
+        ticket.document.write(`<html><body><h3>CIERRE: ${fecha}</h3>
+          <p>Efectivo USD: $${totales.efectivo_usd.toFixed(2)}</p>
+          <p>Efectivo Bs: Bs${formatearBs(totales.efectivo_bs)} (≈ $${totales.efectivo_bs_en_usd.toFixed(2)})</p>
+          <p>Transf: Bs${formatearBs(totales.transf)} (≈ $${totales.transf_en_usd.toFixed(2)})</p>
+          <p>Tarjeta: Bs${formatearBs(totales.tarjeta)} (≈ $${totales.tarjeta_en_usd.toFixed(2)})</p>
+          <p>Biopago: Bs${formatearBs(totales.biopago)} (≈ $${totales.biopago_en_usd.toFixed(2)})</p>
+          <p>Pagos de crédito recibidos hoy: $${totales.abonos_usd.toFixed(2)} (incluidos arriba)</p>
+          <hr/>
+          <p><strong>Total en Bs: Bs${formatearBs(totalEnBs)} (≈ $${totalEnBsUsd.toFixed(2)})</strong></p>
+          <p><strong>Total Ventas del día: $${totalVentasUsd.toFixed(2)} (Bs${formatearBs(totalVentasBs)})</strong></p>
+          ${lineaGanancia}
+          <button onclick="window.print()">Imprimir Ticket</button></body></html>`);
+      }
+    } catch (e) {
+      console.error('Error al cerrar caja:', e);
+      alert('No se pudo completar el cierre de caja. Intenta de nuevo.');
+    } finally {
+      setCargando(false);
     }
-    setCargando(false);
   };
 
   if (verificandoSesion) {
@@ -300,6 +319,18 @@ export default function ReportesPage() {
         </div>
       )}
 
+      {errorCarga && (
+        <div style={{ marginBottom: '16px', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', color: '#b91c1c', fontSize: '14px' }}>
+          {errorCarga}
+        </div>
+      )}
+
+      {cargandoReporte && (
+        <div style={{ marginBottom: '16px', fontSize: '13px', color: '#6b7280' }}>
+          Cargando reporte...
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px', marginBottom: '16px' }}>
         <div style={{ background: 'white', padding: '16px', borderRadius: '8px', border: '1px solid #ddd' }}>
           <p style={{ margin: 0, fontSize: '12px' }}>Efec. USD</p>
@@ -326,11 +357,7 @@ export default function ReportesPage() {
           <p style={{ margin: 0, fontSize: '11px', color: '#6b7280' }}>≈ ${totales.biopago_en_usd.toFixed(2)}</p>
         </div>
         <div style={{ background: 'white', padding: '16px', borderRadius: '8px', border: '1px solid #ddd' }}>
-          <p style={{ margin: 0, fontSize: '12px' }}>Crédito generado hoy (pendiente)</p>
-          <p style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>${totales.credito.toFixed(2)}</p>
-        </div>
-        <div style={{ background: 'white', padding: '16px', borderRadius: '8px', border: '1px solid #ddd' }}>
-          <p style={{ margin: 0, fontSize: '12px' }}>Abonos a crédito recibidos hoy</p>
+          <p style={{ margin: 0, fontSize: '12px' }}>Pagos de crédito recibidos hoy</p>
           <p style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>${totales.abonos_usd.toFixed(2)}</p>
         </div>
       </div>
@@ -342,7 +369,7 @@ export default function ReportesPage() {
           <p style={{ margin: 0, fontSize: '12px', color: '#065f46' }}>≈ ${totalEnBsUsd.toFixed(2)}</p>
         </div>
         <div style={{ background: '#eff6ff', padding: '16px', borderRadius: '8px', border: '2px solid #bfdbfe' }}>
-          <p style={{ margin: 0, fontSize: '12px', color: '#1e3a8a' }}>Total Ventas del día (incluye ventas nuevas + abonos)</p>
+          <p style={{ margin: 0, fontSize: '12px', color: '#1e3a8a' }}>Total Ventas del día (incluye ventas nuevas + pagos de crédito)</p>
           <p style={{ margin: 0, fontSize: '22px', fontWeight: 'bold', color: '#2563eb' }}>${totalVentasUsd.toFixed(2)}</p>
           <p style={{ margin: 0, fontSize: '12px', color: '#1e3a8a' }}>Bs{formatearBs(totalVentasBs)}</p>
         </div>
@@ -353,7 +380,7 @@ export default function ReportesPage() {
             <p style={{ margin: 0, fontSize: '12px', color: '#6b21a8' }}>Bs{formatearBs(gananciaBs)}</p>
             {totales.abonos_ganancia_usd > 0 && (
               <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#9333ea' }}>
-                (de esa ganancia, ${totales.abonos_ganancia_usd.toFixed(2)} vienen de abonos)
+                (de esa ganancia, ${totales.abonos_ganancia_usd.toFixed(2)} vienen de pagos de crédito)
               </p>
             )}
           </div>
@@ -365,10 +392,10 @@ export default function ReportesPage() {
         <table style={{ width: '100%', textAlign: 'left' }}>
           <thead><tr><th>Hora</th><th>Total USD</th><th>Método</th></tr></thead>
           <tbody>{listaVentas.map((v, i) => (
-            <tr key={i} style={{ borderTop: '1px solid #eee' }}>
+            <tr key={v.id ?? i} style={{ borderTop: '1px solid #eee' }}>
               <td style={{ padding: '10px 0' }}>{new Date(v.created_at).toLocaleTimeString()}</td>
               <td>${Number(v.total_usd).toFixed(2)}</td>
-              <td>{v.pago_credito_usd > 0 ? 'Crédito' : v.pago_biopago > 0 ? 'Biopago' : v.pago_tarjeta > 0 ? 'Tarjeta' : v.pago_transferencia > 0 ? 'Transf' : 'Efectivo'}</td>
+              <td>{v.pago_biopago > 0 ? 'Biopago' : v.pago_tarjeta > 0 ? 'Tarjeta' : v.pago_transferencia > 0 ? 'Transf' : 'Efectivo'}</td>
             </tr>
           ))}</tbody>
         </table>
@@ -376,13 +403,13 @@ export default function ReportesPage() {
 
       {listaAbonos.length > 0 && (
         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #ddd' }}>
-          <h2>Abonos a crédito recibidos hoy</h2>
+          <h2>Pagos de crédito recibidos hoy</h2>
           <table style={{ width: '100%', textAlign: 'left' }}>
             <thead><tr><th>Hora</th><th>Monto USD</th></tr></thead>
             <tbody>{listaAbonos.map((a, i) => (
-              <tr key={i} style={{ borderTop: '1px solid #eee' }}>
+              <tr key={a.id ?? i} style={{ borderTop: '1px solid #eee' }}>
                 <td style={{ padding: '10px 0' }}>{new Date(a.created_at).toLocaleTimeString()}</td>
-                <td>${Number(a.total_abono_usd).toFixed(2)}</td>
+                <td>${Number(a.monto_usd).toFixed(2)}</td>
               </tr>
             ))}</tbody>
           </table>

@@ -1,4 +1,4 @@
-export type TipoCredito = 'ilimitado' | 'limite';
+export type TipoCredito = 'ilimitado' | 'limite' | 'contado';
 
 export interface Cliente {
   id: number;

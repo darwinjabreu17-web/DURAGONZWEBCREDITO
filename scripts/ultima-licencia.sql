@@ -1,1 +1,1 @@
-insert into licencias (codigo, cliente_nombre, tipo, max_dispositivos, fecha_expiracion, firma, activa, ultimo_mantenimiento) values ('DGZ-G1TRFO', 'DURAGONZ', 'ilimitada', 3, null, 'e+foZZPojV9dGiWo+e27D66TFFL/5PIlVa7o+PSJXj65/byrUw9Ob+sM5Ede1FcAa56hMgt1YeZ2xioP2hODDA==', true, now());
+insert into licencias (codigo, cliente_nombre, tipo, max_dispositivos, fecha_expiracion, firma, activa, ultimo_mantenimiento) values ('DGZ-R5SOEO', 'DURAGONZ', 'ilimitada', 3, null, 'YEWhIrXyPbX2hztcyzyx6FMJSTUPHhYPnDrBjtaiTWZwpnMRiX21xbqkb/uNPBjW4YtP5DdLXoCEbqgbImYUBQ==', true, now());

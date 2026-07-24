@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type KeyboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { resolverPrecioDesdeTexto } from '@/lib/precio'
+import EscanerCamara from '@/components/EscanerCamara'
 
 interface Sesion {
   id: number
@@ -50,7 +51,7 @@ export default function NuevoProducto() {
   const [stock, setStock] = useState('')
   const [stockMinimo, setStockMinimo] = useState('5')
   const [guardando, setGuardando] = useState(false)
-
+  const [mostrarEscanerCamara, setMostrarEscanerCamara] = useState(false)
   // Estados para las "pildoritas" de porcentaje
   const [porcentajeDetalle, setPorcentajeDetalle] = useState('')
   const [porcentajeMayoreo, setPorcentajeMayoreo] = useState('')
@@ -90,7 +91,7 @@ export default function NuevoProducto() {
   }
 
   // Enter también dispara el cálculo (sin enviar el formulario de una vez)
-  const manejarEnterPrecio = (e: React.KeyboardEvent<HTMLInputElement>, tipo: 'detalle' | 'mayoreo') => {
+  const manejarEnterPrecio = (e: KeyboardEvent<HTMLInputElement>, tipo: 'detalle' | 'mayoreo') => {
     if (e.key !== 'Enter') return
     e.preventDefault()
     if (tipo === 'detalle') manejarBlurPrecio()
@@ -107,41 +108,45 @@ export default function NuevoProducto() {
 
     setGuardando(true)
 
-    const res = await fetch('/api/productos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        codigo: codigo.trim(),
-        nombre: nombre.trim(),
-        precio_costo: precioCosto,
-        precio: precio,
-        precio_mayoreo: precioMayoreo,
-        stock: stock,
-        stock_minimo: stockMinimo,
+    try {
+      const res = await fetch('/api/productos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: codigo.trim(),
+          nombre: nombre.trim(),
+          precio_costo: precioCosto,
+          precio: precio,
+          precio_mayoreo: precioMayoreo,
+          stock: stock,
+          stock_minimo: stockMinimo,
+        })
       })
-    })
 
-    if (!res.ok) {
-      const { error } = await res.json()
-      alert('Error al registrar el producto: ' + error)
+      if (!res.ok) {
+        const { error } = await res.json()
+        alert('Error al registrar el producto: ' + error)
+        return
+      }
+
+      alert('¡Producto registrado con éxito! ✅')
+
+      setCodigo('')
+      setNombre('')
+      setPrecioCosto('')
+      setPrecio('')
+      setPrecioMayoreo('')
+      setStock('')
+      setStockMinimo('5')
+      setPorcentajeDetalle('')
+      setPorcentajeMayoreo('')
+
+      router.push('/dashboard')
+    } catch (err) {
+      alert('No se pudo conectar con el servidor. Verifica tu conexión a internet e intenta de nuevo.')
+    } finally {
       setGuardando(false)
-      return
     }
-
-    alert('¡Producto registrado con éxito! ✅')
-
-    setCodigo('')
-    setNombre('')
-    setPrecioCosto('')
-    setPrecio('')
-    setPrecioMayoreo('')
-    setStock('')
-    setStockMinimo('5')
-    setPorcentajeDetalle('')
-    setPorcentajeMayoreo('')
-    setGuardando(false)
-
-    router.push('/dashboard')
   }
 
   if (verificandoSesion) {
@@ -176,20 +181,37 @@ export default function NuevoProducto() {
           <div style={styles.row}>
             <div style={styles.campoForm}>
               <label style={styles.label}>Código de Barra / Único *</label>
-              <input
-                type="text"
-                placeholder="Ej: 750123456789"
-                value={codigo}
-                onChange={(e) => setCodigo(e.target.value)}
-                style={styles.inputForm}
-                required
-                autoFocus
-              />
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="text"
+                  placeholder="Ej: 750123456789"
+                  value={codigo}
+                  onChange={(e) => setCodigo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const siguienteCampo = document.getElementById('campo-nombre-producto')
+                      siguienteCampo?.focus()
+                    }
+                  }}
+                  style={styles.inputForm}
+                  required
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarEscanerCamara(true)}
+                  style={{ ...styles.botonAplicarPorcentaje, borderLeft: 'none', borderRadius: '10px', padding: '0 14px' }}
+                >
+                  📷
+                </button>
+              </div>
             </div>
 
             <div style={styles.campoForm}>
               <label style={styles.label}>Nombre del Producto *</label>
               <input
+                id="campo-nombre-producto"
                 type="text"
                 placeholder="Ej: Harina Pan 1kg"
                 value={nombre}
@@ -317,6 +339,16 @@ export default function NuevoProducto() {
           </div>
         </form>
       </div>
+      {mostrarEscanerCamara && (
+        <EscanerCamara
+          onDetectado={(codigoDetectado: string) => {
+            setCodigo(codigoDetectado)
+            setMostrarEscanerCamara(false)
+            document.getElementById('campo-nombre-producto')?.focus()
+          }}
+          onCerrar={() => setMostrarEscanerCamara(false)}
+        />
+      )}
     </div>
   )
 }
@@ -343,7 +375,7 @@ const styles = {
   titulo: {
     margin: 0,
     fontSize: '28px',
-    fontWeight: '700',
+    fontWeight: 700,
     color: '#111827'
   },
   subtitulo: {
@@ -358,7 +390,7 @@ const styles = {
     padding: '10px 20px',
     borderRadius: '10px',
     cursor: 'pointer',
-    fontWeight: '500',
+    fontWeight: 500,
     fontSize: '14px',
     transition: 'all 0.2s',
     boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
@@ -374,7 +406,7 @@ const styles = {
   seccionTitulo: {
     margin: '0 0 20px 0',
     fontSize: '16px',
-    fontWeight: '600',
+    fontWeight: 600,
     color: '#374151',
     letterSpacing: '0.5px'
   },
@@ -396,7 +428,7 @@ const styles = {
   },
   label: {
     fontSize: '13px',
-    fontWeight: '500',
+    fontWeight: 500,
     color: '#4b5563',
     marginBottom: '6px'
   },
@@ -440,7 +472,7 @@ const styles = {
     borderLeft: '1px solid #e5e7eb',
     backgroundColor: '#eef2ff',
     color: '#4338ca',
-    fontWeight: '700' as const,
+    fontWeight: 700,
     fontSize: '13px',
     padding: '0 10px',
     cursor: 'pointer'
@@ -452,7 +484,7 @@ const styles = {
     padding: '12px 24px',
     borderRadius: '10px',
     cursor: 'pointer',
-    fontWeight: '600',
+    fontWeight: 600,
     fontSize: '14px',
     boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)',
     transition: 'all 0.2s'

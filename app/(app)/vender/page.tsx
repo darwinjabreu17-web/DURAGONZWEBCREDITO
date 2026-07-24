@@ -1,13 +1,10 @@
 'use client'
 
-'use client'
-
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { dbLocal } from '@/lib/db-local'
-import { hayInternetReal } from '@/lib/conexion'
 import { fetchConTimeout } from '@/lib/fetch-timeout'
+import EscanerCamara from '@/components/EscanerCamara'
 
 interface Producto {
   id: number
@@ -29,7 +26,7 @@ interface Cliente {
   id: number
   nombre: string
   cedula_rif: string | null
-  tipo_credito: 'ilimitado' | 'limite'
+  tipo_credito: 'contado' | 'ilimitado' | 'limite'
   monto_limite: number | null
 }
 
@@ -38,18 +35,12 @@ interface SaldoCliente {
   saldo_usd: number
 }
 
-// Forma mínima que necesita el ticket para imprimir un item.
-// ItemVenta cumple con esto y de sobra, así que sirve tanto para
-// una venta recién hecha como para reimprimir una venta ya guardada.
 interface TicketItem {
   nombre: string
   cantidad: number
   precio: number
 }
 
-// ---- Configuración del ticket, guardada en la tabla configuracion_ticket ----
-// Se llena dinámicamente desde Supabase. Estos valores son solo el
-// respaldo por si todavía no ha cargado o la tabla está vacía.
 interface TicketConfig {
   nombre_negocio: string
   rif_cedula: string
@@ -72,7 +63,6 @@ const TICKET_CONFIG_DEFAULT: TicketConfig = {
   espaciado: 1,
 }
 
-// ---- Sesión guardada en localStorage al iniciar sesión ----
 interface Sesion {
   id: number
   nombre: string
@@ -81,9 +71,20 @@ interface Sesion {
   permisos: Record<string, boolean>
 }
 
-// Devuelve la fecha de HOY usando la hora local del navegador (no UTC).
-// new Date().toISOString() convierte a UTC, lo que hace que después de
-// cierta hora de la tarde/noche "el día" ya se adelante al siguiente.
+interface VentaResumen {
+  id: number
+  created_at: string
+  total_usd: number
+  pago_credito_usd?: number
+  clientes?: { nombre: string } | null
+}
+
+interface ProductoStockBajo {
+  id: number
+  nombre: string
+  stock: number
+}
+
 function obtenerFechaLocal(): string {
   const ahora = new Date()
   const año = ahora.getFullYear()
@@ -92,117 +93,41 @@ function obtenerFechaLocal(): string {
   return `${año}-${mes}-${dia}`
 }
 
-// Formatea un monto en bolívares como 10.913,72 (punto para miles, coma para decimales)
 function formatearBs(numero: number): string {
   return new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numero)
 }
-// Estilos solo para el botón de buscar en móvil — oculto en PC por defecto,
-  // aparece solo en pantallas angostas gracias al @media query.
-  const estiloBotonBuscarMovil = (
-    <style jsx global>{`
-      .boton-buscar-movil { display: none; }
-      .carrito-movil { display: none; }
-      @media (max-width: 768px) {
-        .boton-buscar-movil { display: inline-flex !important; }
-        .tabla-desktop-pos { display: none !important; }
-        .carrito-movil {
-          display: flex !important;
-          flex-direction: column;
-          gap: 10px;
-          padding: 4px 2px 12px;
-        }
-        .botones-footer-movil {
-          flex-wrap: wrap !important;
-        }
-        .boton-oculto-movil {
-          display: none !important;
-        }
-        .boton-cobrar-movil {
-          flex: 1 1 100% !important;
-          order: 10 !important;
-        }
-        .tarjeta-item-movil {
-          background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 14px;
-          padding: 14px;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-        }
-        .tarjeta-item-movil-nombre { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 2px; }
-        .tarjeta-item-movil-codigo { font-size: 12px; color: #9ca3af; margin-bottom: 10px; }
-        .tarjeta-item-movil-fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .stepper-cantidad { display: flex; align-items: center; background: #f3f4f6; border-radius: 10px; overflow: hidden; }
-        .stepper-boton { width: 38px; height: 38px; border: none; background: #e5e7eb; font-size: 20px; font-weight: 700; color: #374151; cursor: pointer; }
-        .stepper-valor { width: 44px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; }
-        .toggle-mayoreo-movil { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
 
-        .footer-movil {
-          flex-direction: column !important;
-          align-items: stretch !important;
-          gap: 12px !important;
-        }
-        .total-container-movil {
-          justify-content: space-between !important;
-          gap: 12px !important;
-        }
-        .total-valor-movil {
-          font-size: 22px !important;
-          word-break: break-word;
-        }
+function formatearHaceTiempo(fechaIso: string): string {
+  const fecha = new Date(fechaIso)
+  const ahora = new Date()
+  const diffMin = Math.floor((ahora.getTime() - fecha.getTime()) / 60000)
+  if (diffMin < 1) return 'hace un momento'
+  if (diffMin < 60) return `hace ${diffMin} min`
+  const diffHoras = Math.floor(diffMin / 60)
+  if (diffHoras < 24) return `hace ${diffHoras} h`
+  return fecha.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit' })
+}
 
-        .cobro-overlay-mobile {
-          align-items: stretch !important;
-          justify-content: stretch !important;
-          padding: 0 !important;
-        }
-        .cobro-modal-mobile {
-          width: 100% !important;
-          height: 100dvh !important;
-          max-height: 100dvh !important;
-          border-radius: 0 !important;
-          overflow-y: auto !important;
-        }
-        .cobro-grid-mobile {
-          grid-template-columns: 1fr !important;
-          padding: 14px 16px !important;
-          gap: 14px !important;
-        }
-        .cobro-metodos-mobile {
-          grid-template-columns: 1fr 1fr !important;
-          gap: 10px !important;
-        }
-        .cobro-botones-mobile {
-          grid-template-columns: 1fr 1fr !important;
-          gap: 10px !important;
-          padding-top: 16px !important;
-        }
-        .info-header-movil {
-          display: none !important;
-        }
-        .estado-vacio-movil {
-          display: none !important;
-        }
-        .contenedor-principal-movil {
-        height: auto !important;
-        min-height: 100vh !important;
-        overflow-y: auto !important;
-        padding-bottom: 90px !important;
-        }
-        .footer-fijo-movil {
-          position: fixed !important;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          z-index: 50;
-          border-radius: 0 !important;
-        }
-      }
-    `}</style>
-  )
 export default function Vender() {
+  async function fetchConReintento(url: string, options: RequestInit, intentos = 3, esperaMs = 400) {
+  let ultimoError: any = null
+  for (let i = 0; i < intentos; i++) {
+    try {
+      const res = await fetch(url, options)
+      const data = await res.json()
+      if (!data.error) return { data }
+      ultimoError = data.error
+    } catch (err) {
+      ultimoError = err
+    }
+    if (i < intentos - 1) {
+      await new Promise(resolve => setTimeout(resolve, esperaMs * (i + 1)))
+    }
+  }
+  return { error: ultimoError }
+}
   const router = useRouter()
 
-  // ---- Protección: exige sesión activa para entrar a esta pantalla ----
   const [sesion, setSesion] = useState<Sesion | null>(null)
   const [verificandoSesion, setVerificandoSesion] = useState(true)
 
@@ -229,6 +154,8 @@ export default function Vender() {
   const puedeVentaCredito = esAdmin || !!sesion?.permisos?.permitir_venta_credito
   const puedeEditarProductos = esAdmin || !!sesion?.permisos?.editar_productos || !!sesion?.permisos?.editar_precios || !!sesion?.permisos?.editar_stock
   const puedeEditarPrecioCosto = esAdmin || !!sesion?.permisos?.editar_precio_costo
+  const puedeCambiarTasa = esAdmin || !!sesion?.permisos?.cambiar_tasa
+
   const [items, setItems] = useState<ItemVenta[]>([])
   const [itemSeleccionadoId, setItemSeleccionadoId] = useState<number | null>(null)
   const [busqueda, setBusqueda] = useState('')
@@ -237,17 +164,54 @@ export default function Vender() {
   const [mostrarEditar, setMostrarEditar] = useState(false)
   const [productoEditando, setProductoEditando] = useState<Producto | null>(null)
   const [tasaDolar, setTasaDolar] = useState(0)
+  const [mostrarCambiarTasa, setMostrarCambiarTasa] = useState(false)
+  const [nuevaTasaInput, setNuevaTasaInput] = useState('')
+  const [guardandoTasa, setGuardandoTasa] = useState(false)
+  const abrirCambiarTasa = () => {
+  if (!puedeCambiarTasa) {
+    alert('No tienes permiso para cambiar la tasa del día')
+    return
+  }
+  setNuevaTasaInput(tasaDolar > 0 ? String(tasaDolar) : '')
+  setMostrarCambiarTasa(true)
+}
 
-  // ---- Verificador de precio (F3) ----
-  // Modal aparte de solo consulta: no agrega nada a la venta, solo muestra
-  // el precio de un producto. Funciona igual con búsqueda manual (por
-  // nombre/palabra/código) que escaneando con el lector de código de barras.
+const guardarNuevaTasa = async () => {
+  const valor = parseFloat(nuevaTasaInput)
+  if (!valor || isNaN(valor) || valor <= 0) {
+    alert('Ingresa una tasa válida')
+    return
+  }
+  setGuardandoTasa(true)
+  try {
+    const hoy = obtenerFechaLocal()
+    const res = await fetch('/api/tasas-diarias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha: hoy, valor }),
+    })
+    const data = await res.json()
+    if (data.error) {
+      alert('Error al actualizar la tasa: ' + data.error)
+      setGuardandoTasa(false)
+      return
+    }
+    setTasaDolar(valor)
+    setMostrarCambiarTasa(false)
+    alert('Tasa del día actualizada ✅')
+    window.dispatchEvent(new CustomEvent('tasaActualizada', { detail: valor })) // <-- AGREGAR
+  } catch (err) {
+    alert('Error de conexión al actualizar la tasa')
+  }
+  setGuardandoTasa(false)
+
+}
+
   const [mostrarVerificadorPrecio, setMostrarVerificadorPrecio] = useState(false)
   const [busquedaPrecio, setBusquedaPrecio] = useState('')
   const [productoVerificado, setProductoVerificado] = useState<Producto | null>(null)
   const inputVerificadorRef = useRef<HTMLInputElement>(null)
 
-  // ---- Calculadora rápida (accesible desde el header) ----
   const [mostrarCalculadora, setMostrarCalculadora] = useState(false)
   const [calcExpresion, setCalcExpresion] = useState('')
   const [calcResultado, setCalcResultado] = useState('0')
@@ -264,7 +228,6 @@ export default function Vender() {
     }
     if (tecla === '=') {
       try {
-        // Solo se permiten dígitos y operadores básicos, nada más.
         if (!/^[0-9+\-*/.() ]*$/.test(calcExpresion)) return
         // eslint-disable-next-line no-eval
         const resultado = eval(calcExpresion)
@@ -277,85 +240,309 @@ export default function Vender() {
     setCalcExpresion((prev) => prev + tecla)
   }
 
-  // ---- Configuración del ticket (nombre del negocio, RIF, letra, etc.) ----
   const [ticketConfig, setTicketConfig] = useState<TicketConfig>(TICKET_CONFIG_DEFAULT)
 
   useEffect(() => {
-  const cargarConfigTicket = async () => {
-    const res = await fetch('/api/configuracion-ticket')
-    const { data } = await res.json()
-
-    if (data) {
-      setTicketConfig({
-        nombre_negocio: data.nombre_negocio || TICKET_CONFIG_DEFAULT.nombre_negocio,
-        rif_cedula: data.rif_cedula || TICKET_CONFIG_DEFAULT.rif_cedula,
-        direccion: data.direccion || TICKET_CONFIG_DEFAULT.direccion,
-        incluir_telefono: !!data.incluir_telefono,
-        telefono: data.telefono || TICKET_CONFIG_DEFAULT.telefono,
-        tamano_letra: data.tamano_letra || TICKET_CONFIG_DEFAULT.tamano_letra,
-        tipo_letra: data.tipo_letra || TICKET_CONFIG_DEFAULT.tipo_letra,
-        espaciado: data.espaciado ?? TICKET_CONFIG_DEFAULT.espaciado,
-      })
-    }
-  }
-  cargarConfigTicket()
-
-  // Se actualiza en vivo si cambian la configuración desde la otra pantalla
-  // mientras esta pantalla de ventas está abierta.
-  const canal = supabase
-    .channel('configuracion_ticket_cambios_venta')
-    .on(
-      'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'configuracion_ticket' },
-      (payload) => {
-        const nuevo = payload.new as any
+    const cargarConfigTicket = async () => {
+      const res = await fetch('/api/configuracion-ticket')
+      const { data } = await res.json()
+      if (data) {
         setTicketConfig({
-          nombre_negocio: nuevo.nombre_negocio || TICKET_CONFIG_DEFAULT.nombre_negocio,
-          rif_cedula: nuevo.rif_cedula || TICKET_CONFIG_DEFAULT.rif_cedula,
-          direccion: nuevo.direccion || TICKET_CONFIG_DEFAULT.direccion,
-          incluir_telefono: !!nuevo.incluir_telefono,
-          telefono: nuevo.telefono || TICKET_CONFIG_DEFAULT.telefono,
-          tamano_letra: nuevo.tamano_letra || TICKET_CONFIG_DEFAULT.tamano_letra,
-          tipo_letra: nuevo.tipo_letra || TICKET_CONFIG_DEFAULT.tipo_letra,
-          espaciado: nuevo.espaciado ?? TICKET_CONFIG_DEFAULT.espaciado,
+          nombre_negocio: data.nombre_negocio || TICKET_CONFIG_DEFAULT.nombre_negocio,
+          rif_cedula: data.rif_cedula || TICKET_CONFIG_DEFAULT.rif_cedula,
+          direccion: data.direccion || TICKET_CONFIG_DEFAULT.direccion,
+          incluir_telefono: !!data.incluir_telefono,
+          telefono: data.telefono || TICKET_CONFIG_DEFAULT.telefono,
+          tamano_letra: data.tamano_letra || TICKET_CONFIG_DEFAULT.tamano_letra,
+          tipo_letra: data.tipo_letra || TICKET_CONFIG_DEFAULT.tipo_letra,
+          espaciado: data.espaciado ?? TICKET_CONFIG_DEFAULT.espaciado,
         })
       }
-    )
-    .subscribe()
+    }
+    cargarConfigTicket()
 
-  return () => {
-    supabase.removeChannel(canal)
+    const canal = supabase
+      .channel('configuracion_ticket_cambios_venta')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'configuracion_ticket' },
+        (payload) => {
+          const nuevo = payload.new as any
+          setTicketConfig({
+            nombre_negocio: nuevo.nombre_negocio || TICKET_CONFIG_DEFAULT.nombre_negocio,
+            rif_cedula: nuevo.rif_cedula || TICKET_CONFIG_DEFAULT.rif_cedula,
+            direccion: nuevo.direccion || TICKET_CONFIG_DEFAULT.direccion,
+            incluir_telefono: !!nuevo.incluir_telefono,
+            telefono: nuevo.telefono || TICKET_CONFIG_DEFAULT.telefono,
+            tamano_letra: nuevo.tamano_letra || TICKET_CONFIG_DEFAULT.tamano_letra,
+            tipo_letra: nuevo.tipo_letra || TICKET_CONFIG_DEFAULT.tipo_letra,
+            espaciado: nuevo.espaciado ?? TICKET_CONFIG_DEFAULT.espaciado,
+          })
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(canal)
     }
   }, [])
+
+  const [ultimaVenta, setUltimaVenta] = useState<VentaResumen | null>(null)
+  const [ultimaVentaCredito, setUltimaVentaCredito] = useState<VentaResumen | null>(null)
+  const [productosStockBajo, setProductosStockBajo] = useState<ProductoStockBajo[]>([])
+
+  const CLAVE_CACHE_TASA = 'pos_tasa_cache'
 
   useEffect(() => {
-    const cargarTasa = async () => {
+  const cargarTasa = async () => {
+    try {
       const hoy = obtenerFechaLocal()
-       const res = await fetch(`/api/tasas-diarias?fecha=${hoy}`)
+      const res = await fetch(`/api/tasas-diarias?fecha=${hoy}`)
       const { data } = await res.json()
-
       if (data) {
         setTasaDolar(data.valor)
-      } else {
-        alert("Atención: Configura la tasa del día en el Dashboard.")
+        try { localStorage.setItem(CLAVE_CACHE_TASA, String(data.valor)) } catch {}
+      }
+    } catch (err) {
+      try {
+        const cache = localStorage.getItem(CLAVE_CACHE_TASA)
+        if (cache) setTasaDolar(Number(cache))
+      } catch {}
+    }
+  }
+  cargarTasa()
+  cargarResumenVender()
+}, [])
+useEffect(() => {
+  const handler = (e: any) => setTasaDolar(e.detail)
+  window.addEventListener('tasaActualizada', handler)
+  return () => window.removeEventListener('tasaActualizada', handler)
+}, [])
+
+  const cargarResumenVender = async () => {
+    try {
+      const [resVenta, resCredito, resStock] = await Promise.all([
+        fetch('/api/ventas?ultima=true'),
+        fetch('/api/ventas?ultimaCredito=true'),
+        fetch('/api/productos?stockBajo=true'),
+      ])
+      const { data: venta } = await resVenta.json()
+      const { data: credito } = await resCredito.json()
+      const { data: stockBajo } = await resStock.json()
+      setUltimaVenta(venta || null)
+      setUltimaVentaCredito(credito || null)
+      setProductosStockBajo(stockBajo || [])
+    } catch (err) {
+      console.error('Error cargando resumen en Vender:', err)
+    }
+  }
+
+  // ---------------- Ventas sin conexión (offline-first) ----------------
+  const CLAVE_VENTAS_PENDIENTES = 'pos_ventas_pendientes_sync'
+  const [estaOnline, setEstaOnline] = useState(true)
+  const [ventasPendientes, setVentasPendientes] = useState<any[]>([])
+  const [sincronizandoVentas, setSincronizandoVentas] = useState(false)
+
+  const leerVentasPendientesStorage = (): any[] => {
+    try {
+      const raw = localStorage.getItem(CLAVE_VENTAS_PENDIENTES)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+
+  const guardarVentasPendientesStorage = (lista: any[]) => {
+    try {
+      localStorage.setItem(CLAVE_VENTAS_PENDIENTES, JSON.stringify(lista))
+    } catch {}
+    setVentasPendientes(lista)
+  }
+
+  const guardarVentaOffline = (imprimir: boolean) => {
+    const idLocal = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const idTicketOffline = -Date.now() // negativo para distinguirlo de un ticket real hasta que sincronice
+
+    const itemsDescuento = items.map(item => ({ id: item.id, cantidad: item.cantidad }))
+    const itemsDetalle = items.map(item => ({ id: item.id, codigo: item.codigo, nombre: item.nombre, precio: item.precio }))
+
+    const payloadVenta = {
+      total_bs: totalBs,
+      total_usd: totalDolares,
+      tasa_dolar: tasaEfectiva,
+      pago_efectivo_bs: pagoEfectivoBs,
+      pago_efectivo_usd: pagoEfectivoUsd,
+      pago_tarjeta: pagoTarjeta,
+      pago_transferencia: pagoTransferencia,
+      pago_biopago: pagoBiopago,
+      cliente_id: clienteSeleccionadoId || null,
+      vendedor_id: sesion?.id || null,
+      vendedor_nombre: sesion?.nombre || null,
+      ganancia_usd: gananciaVentaUsd,
+      items_snapshot: items.map(item => ({
+        producto_id: item.id,
+        codigo: item.codigo,
+        nombre: item.nombre,
+        cantidad: item.cantidad,
+        precio_unitario: item.precio,
+        subtotal: item.precio * item.cantidad,
+      })),
+    }
+
+    const ventaLocal = { idLocal, payloadVenta, itemsDescuento, itemsDetalle, creadaEn: new Date().toISOString() }
+
+    guardarVentasPendientesStorage([...leerVentasPendientesStorage(), ventaLocal])
+
+    const itemsParaTicket = items
+    const clienteParaTicket = clienteSeleccionado
+    const pagosParaTicket = {
+      efectivoBs: pagoEfectivoBs,
+      efectivoUsd: pagoEfectivoUsd,
+      tarjeta: pagoTarjeta,
+      transferencia: pagoTransferencia,
+      biopago: pagoBiopago,
+      creditoUsd: 0,
+    }
+
+    if (imprimir) {
+      imprimirTicket(
+        idTicketOffline,
+        itemsParaTicket,
+        totalDolares,
+        totalBs,
+        tasaEfectiva,
+        clienteParaTicket,
+        sesion?.nombre,
+        pagosParaTicket
+      )
+    }
+
+    setProductos(prev => prev.map(p => {
+      const vendido = itemsParaTicket.find(it => it.id === p.id)
+      return vendido ? { ...p, stock: p.stock - vendido.cantidad } : p
+    }))
+
+    setItems([])
+    setItemSeleccionadoId(null)
+    setMostrarCobro(false)
+    setPagoEfectivoBs(0)
+    setPagoEfectivoUsd(0)
+    setPagoTarjeta(0)
+    setPagoTransferencia(0)
+    setPagoBiopago(0)
+    setClienteSeleccionadoId('')
+    setBusquedaCliente('')
+    setMostrarListaClientes(false)
+    setProcesandoVenta(false)
+
+    alert('🔌 Sin conexión: la venta se guardó en este dispositivo y se subirá sola cuando vuelva el internet.')
+  }
+
+  const [toastSync, setToastSync] = useState<{ tipo: 'exito' | 'error'; mensaje: string } | null>(null)
+  const toastSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const mostrarToastSync = (tipo: 'exito' | 'error', mensaje: string) => {
+    if (toastSyncTimeoutRef.current) clearTimeout(toastSyncTimeoutRef.current)
+    setToastSync({ tipo, mensaje })
+    toastSyncTimeoutRef.current = setTimeout(() => setToastSync(null), 4000)
+  }
+
+  const sincronizarVentasPendientes = async () => {
+    if (sincronizandoVentas) return
+    const pendientes = leerVentasPendientesStorage()
+    if (pendientes.length === 0) return
+
+    setSincronizandoVentas(true)
+    let restantes = [...pendientes]
+
+    for (const ventaLocal of pendientes) {
+      try {
+        const resDescuento = await fetchConTimeout('/api/productos/descontar-stock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: ventaLocal.itemsDescuento }),
+        })
+        const descuentoData = await resDescuento.json()
+        if (descuentoData.error) throw new Error(descuentoData.error)
+
+        const resVenta = await fetch('/api/ventas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(ventaLocal.payloadVenta),
+        })
+        const ventaResp = await resVenta.json()
+        if (ventaResp.error || !ventaResp.data) throw new Error(ventaResp.error || 'sin datos')
+        const ventaGuardada = ventaResp.data
+
+        const itemsParaInsertar = ventaLocal.itemsDescuento.map((it: any) => {
+          const detalle = ventaLocal.itemsDetalle.find((d: any) => d.id === it.id)
+          return {
+            venta_id: ventaGuardada.id,
+            producto_id: it.id,
+            codigo_producto: detalle?.codigo,
+            nombre_producto: detalle?.nombre,
+            cantidad: it.cantidad,
+            precio_unitario: detalle?.precio,
+            subtotal: (detalle?.precio || 0) * it.cantidad,
+          }
+        })
+        await fetchConReintento('/api/venta-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(itemsParaInsertar),
+        })
+
+        restantes = restantes.filter(v => v.idLocal !== ventaLocal.idLocal)
+        guardarVentasPendientesStorage(restantes)
+      } catch (err) {
+        // Esta no se pudo subir (seguimos sin señal o falló el servidor).
+        // Dejamos esta y las que faltan en la cola para el próximo intento.
+        break
       }
     }
-    cargarTasa()
-  }, [])
-  const inputBusquedaRef = useRef<HTMLInputElement>(null)
 
-  // ---- Lector de código de barras ----
-  // El lector actúa como un teclado que escribe muy rápido y termina con
-  // Enter. Acumulamos las teclas en un buffer; si llegan muy rápido entre sí
-  // (más rápido de lo que teclea una persona) y al presionar Enter el texto
-  // acumulado coincide con el código de un producto, lo agregamos directo a
-  // la venta, sin necesidad de abrir el buscador (F1).
+    setSincronizandoVentas(false)
+
+    const subidas = pendientes.length - restantes.length
+    if (subidas > 0) {
+      mostrarToastSync('exito', `✅ ${subidas} venta${subidas === 1 ? '' : 's'} sincronizada${subidas === 1 ? '' : 's'} correctamente`)
+    } else if (restantes.length > 0) {
+      mostrarToastSync('error', `⚠️ No se pudieron subir las ventas guardadas. Se reintentará solo.`)
+    }
+
+    if (restantes.length < pendientes.length) {
+      cargarProductos()
+      cargarClientes()
+      cargarResumenVender()
+    }
+  }
+
+  useEffect(() => {
+    setEstaOnline(navigator.onLine)
+    guardarVentasPendientesStorage(leerVentasPendientesStorage())
+
+    const marcarOnline = () => {
+      setEstaOnline(true)
+      sincronizarVentasPendientes()
+    }
+    const marcarOffline = () => setEstaOnline(false)
+
+    window.addEventListener('online', marcarOnline)
+    window.addEventListener('offline', marcarOffline)
+
+    if (navigator.onLine) sincronizarVentasPendientes()
+
+    return () => {
+      window.removeEventListener('online', marcarOnline)
+      window.removeEventListener('offline', marcarOffline)
+    }
+  }, [])
+
+  const inputBusquedaRef = useRef<HTMLInputElement>(null)
+  const [mostrarEscanerCamara, setMostrarEscanerCamara] = useState(false)
   const scannerBufferRef = useRef('')
-  const sincronizandoRef = useRef(false)
   const scannerUltimaTeclaRef = useRef(0)
 
-  // Aviso visual (toast) que aparece brevemente cuando se reconoce un
-  // escaneo, sea exitoso (producto agregado) o fallido (código no existe).
   const [scanFeedback, setScanFeedback] = useState<{ tipo: 'exito' | 'error'; mensaje: string } | null>(null)
   const scanFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -376,39 +563,33 @@ export default function Vender() {
   const [pagoTarjeta, setPagoTarjeta] = useState(0)
   const [pagoTransferencia, setPagoTransferencia] = useState(0)
   const [pagoBiopago, setPagoBiopago] = useState(0)
-  const [pagoCreditoUsd, setPagoCreditoUsd] = useState(0)
+  const [deudaClienteUsd, setDeudaClienteUsd] = useState(0)
+  const [cargandoDeudaCliente, setCargandoDeudaCliente] = useState(false)
+  const [facturandoCredito, setFacturandoCredito] = useState(false)
 
   const [productos, setProductos] = useState<Producto[]>([])
   const [cargandoProductos, setCargandoProductos] = useState(true)
   const [procesandoVenta, setProcesandoVenta] = useState(false)
-  const [conexionDisponible, setConexionDisponible] = useState(true)
-  const [hayCacheDisponible, setHayCacheDisponible] = useState(true)
-  // ----- Clientes (para crédito y también para que el nombre salga en el ticket) -----
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [saldos, setSaldos] = useState<Record<number, number>>({})
   const [clienteSeleccionadoId, setClienteSeleccionadoId] = useState<number | ''>('')
 
-  // Buscador de cliente dentro del cobro: filtra por nombre o por cédula/RIF.
-  // Si no se toca (queda vacío y sin seleccionar), la venta sigue siendo
-  // "Consumidor Final" tal como antes.
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [mostrarListaClientes, setMostrarListaClientes] = useState(false)
 
-  // ----- Reimprimir último ticket -----
   const [reimprimiendo, setReimprimiendo] = useState(false)
 
-  // ----- Devoluciones / anular venta -----
   const [mostrarDevoluciones, setMostrarDevoluciones] = useState(false)
   const [folioBuscado, setFolioBuscado] = useState('')
   const [buscandoVenta, setBuscandoVenta] = useState(false)
   const [ventasFiltradas, setVentasFiltradas] = useState<any[]>([])
   const [modoFecha, setModoFecha] = useState<'dia' | 'mes'>('dia')
-  const [fechaFiltro, setFechaFiltro] = useState(obtenerFechaLocal()) // YYYY-MM-DD
-  const [mesFiltro, setMesFiltro] = useState(obtenerFechaLocal().slice(0, 7)) // YYYY-MM
+  const [fechaFiltro, setFechaFiltro] = useState(obtenerFechaLocal())
+  const [mesFiltro, setMesFiltro] = useState(obtenerFechaLocal().slice(0, 7))
   const [ventaParaAnular, setVentaParaAnular] = useState<any | null>(null)
   const [itemsVentaParaAnular, setItemsVentaParaAnular] = useState<any[]>([])
   const [procesandoAnulacion, setProcesandoAnulacion] = useState(false)
-// ----- Guardar / retomar tickets pendientes -----
+
   const [mostrarGuardarTicket, setMostrarGuardarTicket] = useState(false)
   const [referenciaTicket, setReferenciaTicket] = useState('')
   const [guardandoTicket, setGuardandoTicket] = useState(false)
@@ -417,6 +598,7 @@ export default function Vender() {
   const [busquedaTicketGuardado, setBusquedaTicketGuardado] = useState('')
   const [ticketsEncontrados, setTicketsEncontrados] = useState<any[]>([])
   const [buscandoTickets, setBuscandoTickets] = useState(false)
+
   useEffect(() => {
     if (!verificandoSesion) {
       cargarProductos()
@@ -424,60 +606,7 @@ export default function Vender() {
     }
   }, [verificandoSesion])
 
-useEffect(() => {
-    if (verificandoSesion) return
-    const intervalo = setInterval(() => {
-      sincronizarVentasPendientes()
-    }, 30000)
-    window.addEventListener('online', sincronizarVentasPendientes)
-    return () => {
-      clearInterval(intervalo)
-      window.removeEventListener('online', sincronizarVentasPendientes)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verificandoSesion])
-  useEffect(() => {
-    if (verificandoSesion) return
-    const intervalo = setInterval(() => {
-      sincronizarVentasPendientes()
-    }, 30000)
-    window.addEventListener('online', sincronizarVentasPendientes)
-    return () => {
-      clearInterval(intervalo)
-      window.removeEventListener('online', sincronizarVentasPendientes)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verificandoSesion])
-
-  useEffect(() => {
-    if (verificandoSesion) return
-
-    const verificarConexion = async () => {
-      const ok = await hayInternetReal()
-      setConexionDisponible(ok)
-      if (!ok) {
-        const cantidad = await dbLocal.productosCache.count()
-        setHayCacheDisponible(cantidad > 0)
-      }
-    }
-
-    verificarConexion()
-
-    const intervaloConexion = setInterval(verificarConexion, 8000)
-
-    const handleOffline = () => setConexionDisponible(false)
-    const handleOnline = () => verificarConexion()
-
-    window.addEventListener('offline', handleOffline)
-    window.addEventListener('online', handleOnline)
-
-    return () => {
-      clearInterval(intervaloConexion)
-      window.removeEventListener('offline', handleOffline)
-      window.removeEventListener('online', handleOnline)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verificandoSesion])
+  const CLAVE_CACHE_PRODUCTOS = 'pos_productos_cache'
 
   const cargarProductos = async () => {
     setCargandoProductos(true)
@@ -485,92 +614,60 @@ useEffect(() => {
       const res = await fetch('/api/productos')
       const { data, error } = await res.json()
 
-      if (error) {
-        alert('Error cargando productos: ' + error)
-        setCargandoProductos(false)
-        return
-      }
+      if (error) throw new Error(error)
 
       setProductos(data || [])
-
-      // Guardamos una copia en la caché local (IndexedDB) para que el
-      // sistema pueda seguir vendiendo si se corta el internet.
-      if (data && data.length > 0) {
-        await dbLocal.productosCache.bulkPut(
-          data.map((p: Producto) => ({
-            id: p.id,
-            nombre: p.nombre,
-            precio_detalle: p.precio,
-            precio_mayor: p.precio_mayoreo,
-            stock: p.stock,
-          }))
-        )
-      }
+      try {
+        localStorage.setItem(CLAVE_CACHE_PRODUCTOS, JSON.stringify(data || []))
+      } catch {}
     } catch (err) {
-      alert('Error cargando productos')
+      // Sin conexión (o el servidor falló): usamos la última lista de
+      // productos guardada en este dispositivo para poder seguir vendiendo.
+      try {
+        const cache = localStorage.getItem(CLAVE_CACHE_PRODUCTOS)
+        if (cache) {
+          setProductos(JSON.parse(cache))
+        } else {
+          alert('No hay productos guardados en este dispositivo y no se pudo conectar al servidor.')
+        }
+      } catch {
+        alert('Error cargando productos')
+      }
     }
     setCargandoProductos(false)
   }
 
-  const cargarClientes = async () => {
-  try {
-    const res = await fetch('/api/clientes')
-    const { clientes: clientesData, saldos: saldosData, error } = await res.json()
+  const CLAVE_CACHE_CLIENTES = 'pos_clientes_cache'
 
-    if (error) {
-      console.error(error)
-      await cargarClientesDesdeCache()
-    } else {
-      setClientes(clientesData || [])
+  const cargarClientes = async () => {
+    try {
+      const res = await fetch('/api/clientes')
+      const { clientes: clientesData, saldos: saldosData, error } = await res.json()
+
+      if (error) throw new Error(error)
+
       const mapa: Record<number, number> = {}
       ;(saldosData as SaldoCliente[] | null)?.forEach((s) => {
         mapa[s.cliente_id] = Number(s.saldo_usd)
       })
+      setClientes(clientesData || [])
       setSaldos(mapa)
-
-      // Guardamos copia local para poder facturar a crédito sin internet.
-      if (clientesData && clientesData.length > 0) {
-        await dbLocal.clientesCache.bulkPut(
-          clientesData.map((c: Cliente) => ({
-            id: c.id,
-            nombre: c.nombre,
-            cedula_rif: c.cedula_rif,
-            tipo_credito: c.tipo_credito,
-            monto_limite: c.monto_limite,
-            saldo_usd: mapa[c.id] || 0,
-          }))
-        )
-      }
-    }
-  } catch (err) {
-    console.error(err)
-    await cargarClientesDesdeCache()
+      try {
+        localStorage.setItem(CLAVE_CACHE_CLIENTES, JSON.stringify({ clientes: clientesData || [], saldos: mapa }))
+      } catch {}
+    } catch (err) {
+      console.error(err)
+      try {
+        const cache = localStorage.getItem(CLAVE_CACHE_CLIENTES)
+        if (cache) {
+          const { clientes: clientesCache, saldos: saldosCache } = JSON.parse(cache)
+          setClientes(clientesCache || [])
+          setSaldos(saldosCache || {})
+        }
+      } catch {}
     }
   }
 
-  // Si no hay internet (o falló la petición), usamos la última copia
-  // guardada localmente para poder seguir facturando a crédito.
-  const cargarClientesDesdeCache = async () => {
-    const clientesGuardados = await dbLocal.clientesCache.toArray()
-    if (clientesGuardados.length === 0) return
-
-    setClientes(clientesGuardados.map(c => ({
-      id: c.id,
-      nombre: c.nombre,
-      cedula_rif: c.cedula_rif,
-      tipo_credito: c.tipo_credito,
-      monto_limite: c.monto_limite,
-    })))
-
-    const mapa: Record<number, number> = {}
-    clientesGuardados.forEach(c => { mapa[c.id] = c.saldo_usd })
-    setSaldos(mapa)
-  }
-
-  // Solo se filtra (y se muestra algo) cuando hay texto escrito. Si el
-  // usuario escribe varias palabras separadas por espacio, un producto
-  // coincide cuando TODAS esas palabras aparecen en su nombre o código
-  // (en cualquier orden), así "leche polvo" encuentra "Leche en Polvo Nestlé".
   const terminosBusqueda = busqueda.trim().toLowerCase().split(/\s+/).filter(Boolean)
 
   const productosFiltrados = terminosBusqueda.length === 0
@@ -583,8 +680,6 @@ useEffect(() => {
         )
       })
 
-  // Mismo patrón de filtrado, pero para el Verificador de Precio (F3), que
-  // usa su propio campo de búsqueda independiente del buscador F1.
   const terminosBusquedaPrecio = busquedaPrecio.trim().toLowerCase().split(/\s+/).filter(Boolean)
 
   const productosFiltradosPrecio = terminosBusquedaPrecio.length === 0
@@ -620,8 +715,6 @@ useEffect(() => {
     setBusqueda('')
   }
 
-  // Busca un producto por su código exacto (usado por el lector de código de
-  // barras) y lo agrega a la venta. Si no existe, avisa al usuario.
   const buscarYAgregarPorCodigo = (codigoEscaneado: string) => {
     const codigoLimpio = codigoEscaneado.trim()
     if (!codigoLimpio) return
@@ -636,7 +729,6 @@ useEffect(() => {
     mostrarScanFeedback('exito', `${producto.nombre} agregado`)
   }
 
-  // ---- Verificador de Precio (F3) ----
   const abrirVerificadorPrecio = () => {
     setBusquedaPrecio('')
     setProductoVerificado(null)
@@ -650,8 +742,6 @@ useEffect(() => {
     setProductoVerificado(null)
   }
 
-  // Igual que buscarYAgregarPorCodigo, pero solo para CONSULTAR: no agrega
-  // nada a la venta, solo muestra el precio del producto encontrado.
   const verificarPrecioPorCodigo = (codigoEscaneado: string) => {
     const codigoLimpio = codigoEscaneado.trim()
     if (!codigoLimpio) return
@@ -668,9 +758,6 @@ useEffect(() => {
     mostrarScanFeedback('exito', `${producto.nombre}: $ ${producto.precio.toFixed(2)}`)
   }
 
-  // Alterna el precio de la línea entre el precio detalle y el precio de
-  // mayoreo del producto. No permite escribir un precio libre: solo
-  // cambiar entre estos dos valores ya definidos en el producto.
   const alternarPrecioMayor = (id: number) => {
     if (!puedeAplicarMayoreo) {
       alert('No tienes permiso para aplicar precio de mayoreo')
@@ -733,7 +820,8 @@ useEffect(() => {
     setProductoEditando(null)
     alert('Producto actualizado ✅')
   }
-const guardarTicketActual = async () => {
+
+  const guardarTicketActual = async () => {
     if (items.length === 0) {
       alert('No hay productos en el ticket para guardar')
       return
@@ -810,6 +898,7 @@ const guardarTicketActual = async () => {
       console.error('Error eliminando ticket pendiente ya retomado:', err)
     }
   }
+
   const cambiarCantidad = (id: number, cantidad: number) => {
     const item = items.find(i => i.id === id)
     if (!item) return
@@ -844,33 +933,40 @@ const guardarTicketActual = async () => {
   }
 
   const totalDolares = items.reduce((sum, item) => sum + (item.precio * item.cantidad), 0)
-  const totalBs = totalDolares * tasaDolar
+  const tasaEfectiva = tasaDolar > 0 ? tasaDolar : 1
+  const totalBs = totalDolares * tasaEfectiva
   const totalPagadoBs =
     pagoEfectivoBs +
-    (pagoEfectivoUsd * tasaDolar) +
+    (pagoEfectivoUsd * tasaEfectiva) +
     pagoTarjeta +
     pagoTransferencia +
-    pagoBiopago +
-    (pagoCreditoUsd * tasaDolar)
+    pagoBiopago
   const restantePago = totalBs - totalPagadoBs
 
-  // Ganancia neta de la venta actual: (precio de venta - costo) por
-  // cada unidad de cada producto en el carrito. Se calcula en USD
-  // porque precio y precio_costo están en dólares.
   const gananciaVentaUsd = items.reduce(
     (sum, item) => sum + (item.precio - (item.precio_costo || 0)) * item.cantidad,
     0
   )
 
   const clienteSeleccionado = clientes.find(c => c.id === clienteSeleccionadoId)
-  const saldoClienteSeleccionado = clienteSeleccionadoId ? (saldos[clienteSeleccionadoId as number] || 0) : 0
+  const saldoClienteSeleccionado = deudaClienteUsd
   const creditoDisponible = clienteSeleccionado?.tipo_credito === 'limite'
     ? Number(clienteSeleccionado.monto_limite || 0) - saldoClienteSeleccionado
     : null
 
-  // Filtra los clientes por nombre o por número de cédula/RIF (lo que sea
-  // que se esté escribiendo). Si el campo está vacío, no muestra nada
-  // todavía (igual que el buscador de productos).
+  useEffect(() => {
+    if (!clienteSeleccionadoId) {
+      setDeudaClienteUsd(0)
+      return
+    }
+    setCargandoDeudaCliente(true)
+    fetch(`/api/creditos-pendientes?cliente_id=${clienteSeleccionadoId}`)
+      .then(res => res.json())
+      .then(({ deuda_total_usd }) => setDeudaClienteUsd(Number(deuda_total_usd || 0)))
+      .catch(() => setDeudaClienteUsd(0))
+      .finally(() => setCargandoDeudaCliente(false))
+  }, [clienteSeleccionadoId])
+
   const clientesFiltrados = busquedaCliente.trim() === ''
     ? []
     : clientes.filter(c => {
@@ -880,7 +976,6 @@ const guardarTicketActual = async () => {
         return nombreLower.includes(textoBusqueda) || cedulaLower.includes(textoBusqueda)
       })
 
-  // ---------- TICKET ----------
   const imprimirTicket = (
     ventaId: number,
     itemsVenta: TicketItem[],
@@ -903,10 +998,6 @@ const guardarTicketActual = async () => {
     const fechaStr = ahora.toLocaleDateString('es-VE')
     const horaStr = ahora.toLocaleTimeString('es-VE')
 
-    // El "espaciado" configurado se usa como padding extra horizontal
-    // en las celdas de la tabla, para separar más las columnas. El mismo
-    // padding se aplica también al encabezado (ver más abajo) para que
-    // "Producto/Cant/P.U./Subt." queden exactamente arriba de sus datos.
     const padCelda = 2 + (ticketConfig.espaciado * 2)
 
     const filasItems = itemsVenta.map(item => `
@@ -929,6 +1020,10 @@ const guardarTicketActual = async () => {
 
     const bannerCancelado = anulada
       ? `<div style="text-align:center;border:3px solid #dc2626;color:#dc2626;font-weight:bold;padding:6px;margin:8px 0;font-size:15px;letter-spacing:1px;">*** VENTA CANCELADA ***</div>`
+      : ''
+
+    const bannerPendienteSync = ventaId < 0
+      ? `<div style="text-align:center;border:2px dashed #b45309;color:#92400e;font-weight:bold;padding:6px;margin:8px 0;font-size:12px;">🔌 GUARDADO SIN CONEXIÓN — PENDIENTE DE SINCRONIZAR</div>`
       : ''
 
     const html = `
@@ -958,9 +1053,10 @@ const guardarTicketActual = async () => {
         <div class="center">RIF: ${ticketConfig.rif_cedula}</div>
         <div class="center">${ticketConfig.direccion}</div>
         ${ticketConfig.incluir_telefono ? `<div class="center">Tel: ${ticketConfig.telefono}</div>` : ''}
-        <div class="center">Ticket N° ${ventaId}</div>
+        <div class="center">Ticket N° ${ventaId < 0 ? '(pendiente)' : ventaId}</div>
         <div class="center">${fechaStr} ${horaStr}</div>
         ${bannerCancelado}
+        ${bannerPendienteSync}
         <div class="linea"></div>
         <div>Cliente: ${cliente ? cliente.nombre : 'Consumidor Final'}</div>
         <div>Atendido por: ${vendedorNombre || '—'}</div>
@@ -1005,88 +1101,6 @@ const guardarTicketActual = async () => {
     }
   }
 
-  const guardarVentaOffline = async (imprimir: boolean) => {
-    for (const item of items) {
-      const cache = await dbLocal.productosCache.get(item.id)
-      if (!cache || cache.stock < item.cantidad) {
-        alert(`Sin conexión y stock insuficiente en caché para "${item.nombre}"`)
-        setProcesandoVenta(false)
-        return
-      }
-    }
-
-    await dbLocal.ventasPendientes.add({
-      cliente_id: clienteSeleccionadoId || null,
-      items: items.map(item => ({
-        producto_id: item.id,
-        nombre: item.nombre,
-        cantidad: item.cantidad,
-        precio: item.precio,
-      })),
-      total_usd: totalDolares,
-      total_bs: totalBs,
-      metodo_pago: {
-        efectivoBs: pagoEfectivoBs,
-        efectivoUsd: pagoEfectivoUsd,
-        tarjeta: pagoTarjeta,
-        transferencia: pagoTransferencia,
-        biopago: pagoBiopago,
-        creditoUsd: pagoCreditoUsd,
-      },
-      fecha: new Date().toISOString(),
-      sincronizado: false,
-    })
-
-    for (const item of items) {
-      const cache = await dbLocal.productosCache.get(item.id)
-      if (cache) {
-        await dbLocal.productosCache.update(item.id, { stock: cache.stock - item.cantidad })
-      }
-    }
-
-    const itemsParaTicketOffline = items
-    const clienteParaTicketOffline = clienteSeleccionado
-    const pagosParaTicketOffline = {
-      efectivoBs: pagoEfectivoBs,
-      efectivoUsd: pagoEfectivoUsd,
-      tarjeta: pagoTarjeta,
-      transferencia: pagoTransferencia,
-      biopago: pagoBiopago,
-      creditoUsd: pagoCreditoUsd,
-    }
-
-    if (imprimir) {
-      imprimirTicket(
-        0,
-        itemsParaTicketOffline,
-        totalDolares,
-        totalBs,
-        tasaDolar,
-        clienteParaTicketOffline,
-        sesion?.nombre,
-        pagosParaTicketOffline
-      )
-    }
-
-    setItems([])
-    setItemSeleccionadoId(null)
-    setMostrarCobro(false)
-    setPagoEfectivoBs(0)
-    setPagoEfectivoUsd(0)
-    setPagoTarjeta(0)
-    setPagoTransferencia(0)
-    setPagoBiopago(0)
-    setPagoCreditoUsd(0)
-    setClienteSeleccionadoId('')
-    setBusquedaCliente('')
-    setMostrarListaClientes(false)
-    setProcesandoVenta(false)
-    setProductos(prev => prev.map(p => {
-      const vendido = itemsParaTicketOffline.find(it => it.id === p.id)
-      return vendido ? { ...p, stock: p.stock - vendido.cantidad } : p
-    }))
-  }
-
   const confirmarVenta = async (imprimir: boolean) => {
     if (Math.abs(restantePago) > 0.01) {
       alert(`El pago no cuadra. ${restantePago > 0 ? 'Faltan' : 'Sobran'} Bs ${formatearBs(Math.abs(restantePago))}`)
@@ -1095,41 +1109,17 @@ const guardarTicketActual = async () => {
 
     if (items.length === 0) return
 
-    if (pagoCreditoUsd > 0) {
-      if (!puedeVentaCredito) {
-        alert('No tienes permiso para facturar ventas a crédito')
-        return
-      }
-      if (!clienteSeleccionadoId) {
-        alert('Selecciona el cliente al que se le va a facturar a crédito')
-        return
-      }
-      if (clienteSeleccionado?.tipo_credito === 'limite' && creditoDisponible !== null && pagoCreditoUsd > creditoDisponible) {
-        alert(`Este cliente solo tiene $${creditoDisponible.toFixed(2)} de crédito disponible`)
-        return
-      }
+    if (!navigator.onLine) {
+      guardarVentaOffline(imprimir)
+      return
     }
 
     setProcesandoVenta(true)
 
-    const conectado = conexionDisponible
-
-    if (!conectado) {
-      await guardarVentaOffline(imprimir)
-      return
-    }
-
-    // --- FASE 1: verificar stock y crear la venta ---
-    // Solo si algo falla AQUÍ (antes de que la venta exista en Supabase)
-    // caemos a modo offline. Una vez creada la venta, ya no se debe duplicar.
-let venta: any = null
-    let productosActuales: any[] = []
+    let venta: any = null
     let stockYaDescontado = false
 
     try {
-      // Descuento atómico: valida y descuenta el stock en una sola
-      // operación de base de datos, así 2 o más cajas vendiendo al
-      // mismo tiempo no pueden dejar el stock en negativo.
       const itemsDescuento = items.map(item => ({ id: item.id, cantidad: item.cantidad }))
       const resDescuento = await fetchConTimeout('/api/productos/descontar-stock', {
         method: 'POST',
@@ -1155,17 +1145,24 @@ let venta: any = null
         body: JSON.stringify({
           total_bs: totalBs,
           total_usd: totalDolares,
-          tasa_dolar: tasaDolar,
+          tasa_dolar: tasaEfectiva,
           pago_efectivo_bs: pagoEfectivoBs,
           pago_efectivo_usd: pagoEfectivoUsd,
           pago_tarjeta: pagoTarjeta,
           pago_transferencia: pagoTransferencia,
           pago_biopago: pagoBiopago,
-          pago_credito_usd: pagoCreditoUsd,
           cliente_id: clienteSeleccionadoId || null,
           vendedor_id: sesion?.id || null,
           vendedor_nombre: sesion?.nombre || null,
           ganancia_usd: gananciaVentaUsd,
+          items_snapshot: items.map(item => ({
+            producto_id: item.id,
+            codigo: item.codigo,
+            nombre: item.nombre,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio,
+            subtotal: item.precio * item.cantidad,
+          })),
         })
       })
       const ventaResp = await resVenta.json()
@@ -1173,8 +1170,6 @@ let venta: any = null
       venta = ventaResp.data
 
     } catch (err) {
-      // Si el stock ya se descontó pero la venta no se pudo crear en
-      // Supabase, hay que devolverlo antes de caer a modo offline.
       if (stockYaDescontado) {
         const itemsDevolucion = items.map(item => ({ id: item.id, cantidad: -item.cantidad }))
         await fetch('/api/productos/descontar-stock', {
@@ -1182,14 +1177,18 @@ let venta: any = null
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: itemsDevolucion }),
         }).catch(() => {})
+        alert('Error de conexión al procesar la venta.')
+        setProcesandoVenta(false)
+        return
       }
-      await guardarVentaOffline(imprimir)
+      // No se alcanzó ni a descontar el stock en el servidor: probablemente
+      // se cayó la conexión justo al vender. Guardamos la venta en el
+      // dispositivo para no perderla, en vez de mostrar solo un error.
+      setProcesandoVenta(false)
+      guardarVentaOffline(imprimir)
       return
     }
 
-    // --- FASE 2: la venta YA EXISTE en Supabase. De aquí en adelante,
-    // cualquier error se avisa pero NUNCA se duplica la venta guardándola
-    // otra vez offline. ---
     try {
       const itemsParaInsertar = items.map(item => ({
         venta_id: venta.id,
@@ -1201,32 +1200,16 @@ let venta: any = null
         subtotal: item.precio * item.cantidad,
       }))
 
-      const resItems = await fetch('/api/venta-items', {
+      const { error: errorItems } = await fetchConReintento('/api/venta-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(itemsParaInsertar)
       })
-      const { error: errorItems } = await resItems.json()
       if (errorItems) {
-        alert(`⚠️ La venta #${venta.id} se guardó, pero hubo un error guardando el detalle de productos: ${errorItems}. Revisa el ticket #${venta.id} en Ventas y Devoluciones.`)
-      }
-
-      for (const item of items) {
-        const actual = productosActuales?.find((p: any) => p.id === item.id)
-        const nuevoStock = (actual?.stock ?? item.stock) - item.cantidad
-
-        const resStock = await fetch(`/api/productos/${item.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stock: nuevoStock }),
-        })
-        const { error: errorStock } = await resStock.json()
-        if (errorStock) {
-          alert(`Error actualizando stock de "${item.nombre}": ` + errorStock)
-        }
+        alert(`⚠️ La venta #${venta.id} se guardó, pero hubo un error guardando el detalle de productos tras varios intentos: ${errorItems}. El respaldo de los productos quedó guardado en la venta — revisa el ticket #${venta.id} en Ventas y Devoluciones.`)
       }
     } catch (err) {
-      alert(`⚠️ La venta #${venta.id} se guardó correctamente, pero hubo un problema de conexión al finalizar detalles (stock/items). Verifica manualmente en Productos y en Ventas y Devoluciones.`)
+      alert(`⚠️ La venta #${venta.id} se guardó correctamente, pero hubo un problema de conexión al finalizar el detalle de productos. Verifica manualmente en Ventas y Devoluciones.`)
     }
 
     const itemsParaTicket = items
@@ -1237,7 +1220,7 @@ let venta: any = null
       tarjeta: pagoTarjeta,
       transferencia: pagoTransferencia,
       biopago: pagoBiopago,
-      creditoUsd: pagoCreditoUsd,
+      creditoUsd: 0,
     }
 
     if (imprimir) {
@@ -1246,7 +1229,7 @@ let venta: any = null
         itemsParaTicket,
         totalDolares,
         totalBs,
-        tasaDolar,
+        tasaEfectiva,
         clienteParaTicket,
         sesion?.nombre,
         pagosParaTicket
@@ -1261,7 +1244,6 @@ let venta: any = null
     setPagoTarjeta(0)
     setPagoTransferencia(0)
     setPagoBiopago(0)
-    setPagoCreditoUsd(0)
     setClienteSeleccionadoId('')
     setBusquedaCliente('')
     setMostrarListaClientes(false)
@@ -1271,87 +1253,103 @@ let venta: any = null
       return vendido ? { ...p, stock: p.stock - vendido.cantidad } : p
     }))
     cargarClientes()
+    cargarResumenVender()
   }
-const sincronizarVentasPendientes = async () => {
-    if (sincronizandoRef.current) return
-    sincronizandoRef.current = true
+const facturarACredito = async () => {
+    if (!puedeVentaCredito) {
+      alert('No tienes permiso para facturar ventas a crédito')
+      return
+    }
+    if (!clienteSeleccionadoId) {
+      alert('Selecciona el cliente al que se le va a fiar')
+      return
+    }
+    if (clienteSeleccionado?.tipo_credito === 'contado') {
+      alert('Este cliente es de contado y no se le puede fiar. Si quieres poder fiarle, cambia su tipo de crédito en su ficha (Clientes).')
+      return
+    }
+    if (items.length === 0) return
+
+    if (clienteSeleccionado?.tipo_credito === 'limite' && creditoDisponible !== null && totalDolares > creditoDisponible) {
+      alert(`Este cliente solo tiene $${creditoDisponible.toFixed(2)} de crédito disponible`)
+      return
+    }
+
+    setFacturandoCredito(true)
+    let stockYaDescontado = false
 
     try {
-      const conectado = await hayInternetReal()
-      if (!conectado) return
+      const itemsDescuento = items.map(item => ({ id: item.id, cantidad: item.cantidad }))
+      const resDescuento = await fetchConTimeout('/api/productos/descontar-stock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: itemsDescuento }),
+      })
+      const descuentoData = await resDescuento.json()
 
-    const todasLasVentas = await dbLocal.ventasPendientes.toArray()
-    const pendientes = todasLasVentas.filter(v => !v.sincronizado)
+      if (descuentoData.error) {
+        if (descuentoData.stockInsuficiente) {
+          alert(descuentoData.error)
+          setFacturandoCredito(false)
+          cargarProductos()
+          return
+        }
+        throw new Error(descuentoData.error)
+      }
+      stockYaDescontado = true
 
-    if (pendientes.length === 0) return
+      const resPedido = await fetch('/api/creditos-pendientes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cliente_id: clienteSeleccionadoId,
+          vendedor_id: sesion?.id || null,
+          vendedor_nombre: sesion?.nombre || null,
+          items: items.map(item => ({
+            producto_id: item.id,
+            codigo_producto: item.codigo,
+            nombre_producto: item.nombre,
+            cantidad: item.cantidad,
+          })),
+        }),
+      })
+      const pedidoResp = await resPedido.json()
+      if (pedidoResp.error) throw new Error(pedidoResp.error)
 
-    for (const ventaPendiente of pendientes) {
-      try {
-        const resVenta = await fetch('/api/ventas', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            total_bs: ventaPendiente.total_bs,
-            total_usd: ventaPendiente.total_usd,
-            tasa_dolar: tasaDolar,
-            pago_efectivo_bs: ventaPendiente.metodo_pago.efectivoBs || 0,
-            pago_efectivo_usd: ventaPendiente.metodo_pago.efectivoUsd || 0,
-            pago_tarjeta: ventaPendiente.metodo_pago.tarjeta || 0,
-            pago_transferencia: ventaPendiente.metodo_pago.transferencia || 0,
-            pago_biopago: ventaPendiente.metodo_pago.biopago || 0,
-            pago_credito_usd: ventaPendiente.metodo_pago.creditoUsd || 0,
-            cliente_id: ventaPendiente.cliente_id,
-            vendedor_id: sesion?.id || null,
-            vendedor_nombre: sesion?.nombre || null,
-            ganancia_usd: 0,
-          })
-        })
-        const { data: venta, error: errorVenta } = await resVenta.json()
-        if (errorVenta || !venta) continue
+      alert(`✅ Se fió a ${clienteSeleccionado?.nombre}. El stock ya fue descontado.`)
 
-        const itemsParaInsertar = ventaPendiente.items.map(item => ({
-          venta_id: venta.id,
-          producto_id: item.producto_id,
-          codigo_producto: '',
-          nombre_producto: item.nombre,
-          cantidad: item.cantidad,
-          precio_unitario: item.precio,
-          subtotal: item.precio * item.cantidad,
-        }))
-
-        await fetch('/api/venta-items', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(itemsParaInsertar)
-        })
-
-        const itemsDescuento = ventaPendiente.items.map(item => ({
-          id: item.producto_id,
-          cantidad: item.cantidad,
-        }))
+      setProductos(prev => prev.map(p => {
+        const vendido = items.find(it => it.id === p.id)
+        return vendido ? { ...p, stock: p.stock - vendido.cantidad } : p
+      }))
+      setItems([])
+      setItemSeleccionadoId(null)
+      setMostrarCobro(false)
+      setPagoEfectivoBs(0)
+      setPagoEfectivoUsd(0)
+      setPagoTarjeta(0)
+      setPagoTransferencia(0)
+      setPagoBiopago(0)
+      setClienteSeleccionadoId('')
+      setBusquedaCliente('')
+      setMostrarListaClientes(false)
+      setDeudaClienteUsd(0)
+      cargarClientes()
+      cargarResumenVender()
+    } catch (err) {
+      if (stockYaDescontado) {
+        const itemsDevolucion = items.map(item => ({ id: item.id, cantidad: -item.cantidad }))
         await fetch('/api/productos/descontar-stock', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: itemsDescuento }),
+          body: JSON.stringify({ items: itemsDevolucion }),
         }).catch(() => {})
-    
-        await dbLocal.ventasPendientes.delete(ventaPendiente.id!)
-      } catch (err) {
-        console.error('Error sincronizando venta pendiente:', err)
-        // se deja en la cola para reintentar en el próximo ciclo
       }
-    }
-
-   cargarProductos()
-      alert(`✅ ${pendientes.length} venta(s) offline sincronizada(s) con éxito`)
+      alert('Error al facturar a crédito: ' + (err instanceof Error ? err.message : 'error desconocido'))
     } finally {
-      sincronizandoRef.current = false
+      setFacturandoCredito(false)
     }
   }
-  // ---------- Reimprimir último ticket ----------
-  // Busca en la base de datos la última venta guardada (no depende de
-  // la memoria, así que funciona aunque hayas recargado la página).
-  
   const reimprimirUltimoTicket = async () => {
     if (!puedeReimprimir) {
       alert('No tienes permiso para reimprimir tickets')
@@ -1360,15 +1358,15 @@ const sincronizarVentasPendientes = async () => {
     setReimprimiendo(true)
 
     const resVenta = await fetch('/api/ventas?ultima=true')
-    const { data: ultimaVenta, error: errorVenta } = await resVenta.json()
+    const { data: ultimaVentaResp, error: errorVenta } = await resVenta.json()
 
-    if (errorVenta || !ultimaVenta) {
+    if (errorVenta || !ultimaVentaResp) {
       alert('No se encontró ninguna venta para reimprimir.')
       setReimprimiendo(false)
       return
     }
 
-    const resItems = await fetch(`/api/venta-items?venta_id=${ultimaVenta.id}`)
+    const resItems = await fetch(`/api/venta-items?venta_id=${ultimaVentaResp.id}`)
     const { data: itemsVenta, error: errorItems } = await resItems.json()
 
     if (errorItems || !itemsVenta) {
@@ -1378,12 +1376,12 @@ const sincronizarVentasPendientes = async () => {
     }
 
     let clienteDeLaVenta: Cliente | undefined = undefined
-if (ultimaVenta.cliente_id) {
-  clienteDeLaVenta = clientes.find(c => c.id === ultimaVenta.cliente_id)
-  if (!clienteDeLaVenta) {
-    const resCliente = await fetch(`/api/clientes/${ultimaVenta.cliente_id}`)
-    const { data: clienteData } = await resCliente.json()
-    if (clienteData) clienteDeLaVenta = clienteData
+    if (ultimaVentaResp.cliente_id) {
+      clienteDeLaVenta = clientes.find(c => c.id === ultimaVentaResp.cliente_id)
+      if (!clienteDeLaVenta) {
+        const resCliente = await fetch(`/api/clientes/${ultimaVentaResp.cliente_id}`)
+        const { data: clienteData } = await resCliente.json()
+        if (clienteData) clienteDeLaVenta = clienteData
       }
     }
 
@@ -1394,30 +1392,27 @@ if (ultimaVenta.cliente_id) {
     }))
 
     imprimirTicket(
-      ultimaVenta.id,
+      ultimaVentaResp.id,
       itemsParaTicket,
-      Number(ultimaVenta.total_usd),
-      Number(ultimaVenta.total_bs),
-      Number(ultimaVenta.tasa_dolar),
+      Number(ultimaVentaResp.total_usd),
+      Number(ultimaVentaResp.total_bs),
+      Number(ultimaVentaResp.tasa_dolar),
       clienteDeLaVenta,
-      ultimaVenta.vendedor_nombre,
+      ultimaVentaResp.vendedor_nombre,
       {
-        efectivoBs: Number(ultimaVenta.pago_efectivo_bs || 0),
-        efectivoUsd: Number(ultimaVenta.pago_efectivo_usd || 0),
-        tarjeta: Number(ultimaVenta.pago_tarjeta || 0),
-        transferencia: Number(ultimaVenta.pago_transferencia || 0),
-        biopago: Number(ultimaVenta.pago_biopago || 0),
-        creditoUsd: Number(ultimaVenta.pago_credito_usd || 0),
+        efectivoBs: Number(ultimaVentaResp.pago_efectivo_bs || 0),
+        efectivoUsd: Number(ultimaVentaResp.pago_efectivo_usd || 0),
+        tarjeta: Number(ultimaVentaResp.pago_tarjeta || 0),
+        transferencia: Number(ultimaVentaResp.pago_transferencia || 0),
+        biopago: Number(ultimaVentaResp.pago_biopago || 0),
+        creditoUsd: Number(ultimaVentaResp.pago_credito_usd || 0),
       },
-      ultimaVenta.anulada === true
+      ultimaVentaResp.anulada === true
     )
 
     setReimprimiendo(false)
   }
 
-  // ---------- Devoluciones / anular venta ----------
-  // Muestra las ventas del período elegido (un día específico o un mes
-  // completo) para que sea fácil encontrar el ticket a anular.
   const cargarVentasFiltradas = async () => {
     let fechaInicio: string
     let fechaFin: string
@@ -1426,9 +1421,8 @@ if (ultimaVenta.cliente_id) {
       fechaInicio = fechaFiltro
       fechaFin = fechaFiltro
     } else {
-      // mesFiltro viene como "YYYY-MM"
       const [año, mes] = mesFiltro.split('-').map(Number)
-      const ultimoDia = new Date(año, mes, 0).getDate() // último día de ese mes
+      const ultimoDia = new Date(año, mes, 0).getDate()
       fechaInicio = `${mesFiltro}-01`
       fechaFin = `${mesFiltro}-${String(ultimoDia).padStart(2, '0')}`
     }
@@ -1438,8 +1432,6 @@ if (ultimaVenta.cliente_id) {
     setVentasFiltradas(data || [])
   }
 
-  // Recarga la lista automáticamente cada vez que cambia el día, el mes,
-  // o el modo (día/mes), mientras el modal de devoluciones esté abierto.
   useEffect(() => {
     if (mostrarDevoluciones) {
       cargarVentasFiltradas()
@@ -1456,7 +1448,6 @@ if (ultimaVenta.cliente_id) {
     setMostrarDevoluciones(true)
   }
 
-  // Busca una venta específica por su número de ticket (folio = id de la venta)
   const buscarVentaPorFolio = async (folio: string) => {
     const idNumerico = parseInt(folio)
     if (!idNumerico || isNaN(idNumerico)) {
@@ -1493,9 +1484,6 @@ if (ultimaVenta.cliente_id) {
     setBuscandoVenta(false)
   }
 
-  // Anula la venta completa: devuelve el stock de cada producto y
-  // elimina la venta para que NO aparezca en reportes, créditos ni saldos
-  // (es como si nunca se hubiera hecho).
   const anularVenta = async () => {
     if (!puedeCancelarVentas) {
       alert('No tienes permiso para anular ventas')
@@ -1510,7 +1498,6 @@ if (ultimaVenta.cliente_id) {
 
     setProcesandoAnulacion(true)
 
-    // 1. Devolver el stock de cada producto vendido
     const idsDevolucion = itemsVentaParaAnular.map(it => it.producto_id).join(',')
     const resProductosActuales = await fetch(`/api/productos?ids=${idsDevolucion}`)
     const { data: productosActuales } = await resProductosActuales.json()
@@ -1529,9 +1516,6 @@ if (ultimaVenta.cliente_id) {
       alert('Error devolviendo stock al inventario: ' + errorDevolucion)
     }
 
-    // 2. Marcar la venta como anulada (NO se borra, así se puede seguir
-    // consultando/reimprimiendo con el sello de CANCELADO). Reportes y
-    // créditos deben ignorar las ventas con anulada = true.
     const resAnular = await fetch(`/api/ventas/${ventaParaAnular.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1557,7 +1541,6 @@ if (ultimaVenta.cliente_id) {
     cargarVentasFiltradas()
   }
 
-  // Imprime una copia de cualquier ticket ya guardado (cancelado o no).
   const imprimirCopiaTicket = (venta: any, itemsVenta: any[]) => {
     if (!puedeReimprimir) {
       alert('No tienes permiso para reimprimir tickets')
@@ -1594,14 +1577,8 @@ if (ultimaVenta.cliente_id) {
     )
   }
 
-
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      // ---- Lector de código de barras (funciona en cualquier momento) ----
-      // Se desactiva solo mientras hay un modal abierto donde escanear no
-      // tiene sentido (calculadora, edición de producto, cobro, devoluciones),
-      // y también si el foco está en un campo numérico (como "cantidad"),
-      // para no meter el código escaneado ahí por accidente.
       const elementoActivo = document.activeElement as HTMLElement | null
       const escribiendoEnCampoNumero =
         elementoActivo?.tagName === 'INPUT' &&
@@ -1611,15 +1588,15 @@ if (ultimaVenta.cliente_id) {
         !mostrarEditar &&
         !mostrarCobro &&
         !mostrarDevoluciones &&
+        !mostrarCambiarTasa &&
         !escribiendoEnCampoNumero
+        && !mostrarEscanerCamara
 
       if (escaneoActivo) {
         const ahora = Date.now()
         const tiempoDesdeUltimaTecla = ahora - scannerUltimaTeclaRef.current
         scannerUltimaTeclaRef.current = ahora
 
-        // Si pasó demasiado tiempo entre teclas, no es un lector de código de
-        // barras (es una persona tecleando) y reiniciamos el buffer.
         if (tiempoDesdeUltimaTecla > 60) {
           scannerBufferRef.current = ''
         }
@@ -1642,8 +1619,6 @@ if (ultimaVenta.cliente_id) {
         }
       }
 
-      // Mientras la calculadora está abierta, el teclado la controla a
-      // ella y no dispara ningún otro atajo (F1, F12, etc.)
       if (mostrarCalculadora) {
         if (e.key >= '0' && e.key <= '9') {
           e.preventDefault()
@@ -1666,23 +1641,13 @@ if (ultimaVenta.cliente_id) {
         }
         return
       }
+
       if (e.key === 'F1') {
         e.preventDefault()
         if (mostrarCobro) {
           if (Math.abs(restantePago) < 0.01 && !procesandoVenta) {
             confirmarVenta(true)
           }
-        } else if (!mostrarVerificadorPrecio) {
-          setMostrarBuscador(true)
-          setTimeout(() => inputBusquedaRef.current?.focus(), 100)
-        }
-      }
-      if (e.key === 'F3') {
-        e.preventDefault()
-        if (mostrarVerificadorPrecio) {
-          cerrarVerificadorPrecio()
-        } else if (!mostrarCobro && !mostrarBuscador && !mostrarDevoluciones && !mostrarEditar && !mostrarCalculadora) {
-          abrirVerificadorPrecio()
         }
       }
       if (e.key === 'F2') {
@@ -1693,34 +1658,14 @@ if (ultimaVenta.cliente_id) {
           }
         }
       }
-      if (e.key === 'F12') {
-        e.preventDefault()
-        if (items.length > 0 && !mostrarCobro && !mostrarVerificadorPrecio) {
-          setPagoEfectivoBs(0)
-          setPagoEfectivoUsd(0)
-          setPagoTarjeta(0)
-          setPagoTransferencia(0)
-          setPagoBiopago(0)
-          setPagoCreditoUsd(0)
-          setClienteSeleccionadoId('')
-          setBusquedaCliente('')
-          setMostrarListaClientes(false)
-          setMostrarCobro(true)
-        }
-      }
-      if (e.key === 'F9') {
-        e.preventDefault()
-        if (!mostrarCobro && !mostrarBuscador && !mostrarDevoluciones && !mostrarVerificadorPrecio && !reimprimiendo) {
-          reimprimirUltimoTicket()
-        }
-      }
       if (e.key === 'F10') {
         e.preventDefault()
-        if (!mostrarCobro && !mostrarBuscador && !mostrarVerificadorPrecio) {
-          abrirDevoluciones()
+        if (!mostrarCobro && !mostrarVerificadorPrecio) {
+          setMostrarBuscador(true)
+          setTimeout(() => inputBusquedaRef.current?.focus(), 100)
         }
       }
-      if (e.key === 'F2') {
+      if (e.key === 'F11') {
         e.preventDefault()
         if (!mostrarCobro && !mostrarBuscador && !mostrarDevoluciones && !mostrarVerificadorPrecio) {
           if (!itemSeleccionadoId) {
@@ -1730,13 +1675,63 @@ if (ultimaVenta.cliente_id) {
           alternarPrecioMayor(itemSeleccionadoId)
         }
       }
+      if (e.key === 'F3') {
+        e.preventDefault()
+        if (mostrarVerificadorPrecio) {
+          cerrarVerificadorPrecio()
+        } else if (!mostrarCobro && !mostrarBuscador && !mostrarDevoluciones && !mostrarEditar && !mostrarCalculadora) {
+          abrirVerificadorPrecio()
+        }
+      }
+      if (e.key === 'F12') {
+        e.preventDefault()
+        if (items.length > 0 && !mostrarCobro && !mostrarVerificadorPrecio) {
+          setPagoEfectivoBs(0)
+          setPagoEfectivoUsd(0)
+          setPagoTarjeta(0)
+          setPagoTransferencia(0)
+          setPagoBiopago(0)
+          setClienteSeleccionadoId('')
+          setBusquedaCliente('')
+          setMostrarListaClientes(false)
+          setMostrarCobro(true)
+        }
+      }
+      if (e.key === 'F5') {
+        e.preventDefault()
+        if (!mostrarCobro && !mostrarBuscador && !mostrarDevoluciones && !mostrarVerificadorPrecio && !reimprimiendo) {
+          reimprimirUltimoTicket()
+        }
+      }
+      if (e.key === 'F6') {
+        e.preventDefault()
+        if (!mostrarCobro && !mostrarBuscador && !mostrarVerificadorPrecio) {
+          abrirDevoluciones()
+        }
+      }
+      if (e.key === 'F8') {
+        e.preventDefault()
+        if (items.length > 0 && !mostrarCobro && !mostrarBuscador && !mostrarVerificadorPrecio && !mostrarDevoluciones) {
+          setMostrarGuardarTicket(true)
+        }
+      }
+      if (e.key === 'F9') {
+        e.preventDefault()
+        if (!mostrarCobro && !mostrarBuscador && !mostrarVerificadorPrecio && !mostrarDevoluciones) {
+          setMostrarBuscarTickets(true)
+        }
+      }
       if (e.key === 'Escape') {
         setMostrarBuscador(false)
         setMostrarCobro(false)
         setMostrarEditar(false)
         setMostrarDevoluciones(false)
+        setMostrarGuardarTicket(false)
+        setMostrarBuscarTickets(false)
+        setMostrarCambiarTasa(false)
         cerrarVerificadorPrecio()
       }
+      
     }
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
@@ -1749,6 +1744,7 @@ if (ultimaVenta.cliente_id) {
     mostrarEditar,
     mostrarVerificadorPrecio,
     mostrarCalculadora,
+    mostrarCambiarTasa,
     calcExpresion,
     reimprimiendo,
     restantePago,
@@ -1759,7 +1755,6 @@ if (ultimaVenta.cliente_id) {
     pagoTarjeta,
     pagoTransferencia,
     pagoBiopago,
-    pagoCreditoUsd,
     productos,
   ])
 
@@ -1771,27 +1766,19 @@ if (ultimaVenta.cliente_id) {
     )
   }
 
+  const hayStockBajo = productosStockBajo.length > 0
+  const textoTicker = hayStockBajo
+    ? productosStockBajo.map(p => `${p.nombre} (${p.stock})`).join('   •   ')
+    : 'SIN PRODUCTOS EN STOCK BAJO'
+
+  const hayVentaPendienteAntigua = ventasPendientes.some(
+    (v) => Date.now() - new Date(v.creadaEn).getTime() > 24 * 60 * 60 * 1000
+  )
+
   return (
     <div style={styles.container} className="contenedor-principal-movil">
-    {estiloBotonBuscarMovil}  
-    {!conexionDisponible && (
-        <div style={{
-          padding: '10px 20px',
-          borderRadius: '10px',
-          marginBottom: '12px',
-          fontWeight: 700 as const,
-          fontSize: '15px',
-          textAlign: 'center' as const,
-          backgroundColor: hayCacheDisponible ? '#fef3c7' : '#fee2e2',
-          color: hayCacheDisponible ? '#92400e' : '#991b1b',
-          border: hayCacheDisponible ? '2px solid #fde68a' : '2px solid #fecaca',
-        }}>
-          {hayCacheDisponible
-            ? '⚠️ Sin conexión. Puedes seguir vendiendo — las ventas se sincronizarán cuando vuelva internet.'
-            : '🔴 Sin conexión y sin datos guardados. Este dispositivo no puede vender ahora. Usa el dispositivo de respaldo o espera a que vuelva la señal.'}
-        </div>
-      )}
-      <style>{`
+      {estiloBotonBuscarMovil}
+          <style>{`
         @keyframes scanToastEntrada {
           from { opacity: 0; transform: translate(-50%, -14px) scale(0.96); }
           to { opacity: 1; transform: translate(-50%, 0) scale(1); }
@@ -1801,7 +1788,132 @@ if (ultimaVenta.cliente_id) {
           70% { box-shadow: 0 0 0 10px rgba(5, 150, 105, 0); }
           100% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
         }
+        @keyframes desplazarLedVender {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .ledMiniVender {
+          background: #000;
+          border-radius: 7px;
+          padding: 5px 0;
+          flex: 1 1 auto;
+          min-width: 150px;
+          overflow: hidden;
+          position: relative;
+          box-shadow: inset 0 2px 5px rgba(0,0,0,0.8);
+        }
+        .ledMiniVenderScanlines {
+          position: absolute;
+          inset: 0;
+          background-image: repeating-linear-gradient(rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 3px);
+          pointer-events: none;
+        }
+        .ledMiniVenderFade {
+          -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+        }
+        .ledMiniVenderTicker {
+          display: inline-block;
+          white-space: nowrap;
+          animation: desplazarLedVender 12s linear infinite;
+        }
+        .ledMiniVenderTexto {
+          color: #4ade80;
+          font-family: "Courier New", monospace;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          padding-left: 14px;
+          text-shadow: 0 0 5px rgba(74,222,128,0.85);
+        }
+        @keyframes pulsoConexion {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.55; transform: scale(1.15); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        .pulsoIconoConexion {
+          display: inline-block;
+          animation: pulsoConexion 1.4s ease-in-out infinite;
+        }
       `}</style>
+
+      {!estaOnline && (
+        <div
+          style={{
+            position: 'sticky' as const,
+            top: 0,
+            zIndex: 1500,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexWrap: 'wrap' as const,
+            gap: '10px',
+            padding: '10px 16px',
+            background: hayVentaPendienteAntigua
+              ? 'linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%)'
+              : 'linear-gradient(135deg, #b45309 0%, #92400e 100%)',
+            color: 'white',
+            fontSize: '13px',
+            fontWeight: 600 as const,
+            textAlign: 'center' as const,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+          }}
+        >
+          <span className="pulsoIconoConexion" style={{ fontSize: '16px' }}>🔌</span>
+          <span>
+            Sin conexión a internet — puedes seguir vendiendo con normalidad.
+            {ventasPendientes.length > 0 && ` Tienes ${ventasPendientes.length} venta${ventasPendientes.length === 1 ? '' : 's'} guardada${ventasPendientes.length === 1 ? '' : 's'} en este dispositivo.`}
+            {' '}Se sincronizarán solas en cuanto vuelva la señal.
+            {hayVentaPendienteAntigua && ' ⚠️ Hay ventas guardadas hace más de 24h — revisa la conexión de este dispositivo.'}
+          </span>
+        </div>
+      )}
+
+      {estaOnline && ventasPendientes.length > 0 && (
+        <div
+          style={{
+            position: 'sticky' as const,
+            top: 0,
+            zIndex: 1500,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexWrap: 'wrap' as const,
+            gap: '12px',
+            padding: '10px 16px',
+            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+            color: 'white',
+            fontSize: '13px',
+            fontWeight: 600 as const,
+            textAlign: 'center' as const,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+          }}
+        >
+          <span className={sincronizandoVentas ? 'pulsoIconoConexion' : ''} style={{ fontSize: '16px' }}>🔄</span>
+          <span>
+            {sincronizandoVentas
+              ? 'Sincronizando tus ventas guardadas...'
+              : `${ventasPendientes.length} venta${ventasPendientes.length === 1 ? '' : 's'} guardada${ventasPendientes.length === 1 ? '' : 's'} sin subir todavía.`}
+          </span>
+          {!sincronizandoVentas && (
+            <button
+              onClick={sincronizarVentasPendientes}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: '1px solid rgba(255,255,255,0.5)',
+                color: 'white',
+                borderRadius: '8px',
+                padding: '4px 12px',
+                fontWeight: 700 as const,
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              Sincronizar ahora
+            </button>
+          )}
+        </div>
+      )}
 
       {scanFeedback && (
         <div
@@ -1831,21 +1943,90 @@ if (ultimaVenta.cliente_id) {
         </div>
       )}
 
-      <div style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button onClick={() => router.push('/dashboard')} style={styles.botonVolver}>
-            ← Volver
-          </button>
-          <h1 style={styles.titulo}>PUNTO DE VENTA</h1>
+      {toastSync && (
+        <div
+          style={{
+            position: 'fixed' as const,
+            bottom: '24px',
+            left: '50%',
+            transform: 'translate(-50%, 0)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '12px 20px',
+            borderRadius: '12px',
+            fontWeight: 700 as const,
+            fontSize: '14px',
+            color: 'white',
+            backgroundColor: toastSync.tipo === 'exito' ? '#059669' : '#dc2626',
+            boxShadow: '0 10px 25px -5px rgba(0,0,0,0.3)',
+            animation: 'scanToastEntrada 0.2s ease-out',
+            maxWidth: '90vw',
+            textAlign: 'center' as const,
+          }}
+        >
+          {toastSync.mensaje}
         </div>
-        <div style={styles.headerRight}>
+      )}
+
+      <div style={styles.header} className="header-desktop-vender">
+        <div style={styles.headerUnica}>
+          <span style={styles.resumenItem}>
+            💵 <strong>{ultimaVenta ? `$${ultimaVenta.total_usd.toFixed(2)}` : '—'}</strong>
+            {ultimaVenta && <span style={styles.resumenSub}> · {formatearHaceTiempo(ultimaVenta.created_at)}</span>}
+          </span>
+          <span style={styles.resumenSeparador}>·</span>
+          <span style={styles.resumenItem}>
+            ⏳ <strong>{ultimaVentaCredito ? `$${(ultimaVentaCredito.pago_credito_usd || 0).toFixed(2)}` : '—'}</strong>
+            {ultimaVentaCredito && <span style={styles.resumenSub}> · {ultimaVentaCredito.clientes?.nombre || 'Cliente'}</span>}
+          </span>
+          <span style={styles.resumenSeparador}>·</span>
+
+          {(!estaOnline || ventasPendientes.length > 0) && (
+            <>
+              <span
+                className={!estaOnline || sincronizandoVentas ? 'pulsoIconoConexion' : ''}
+                style={{
+                  ...styles.resumenItem,
+                  color: estaOnline ? '#92400e' : '#dc2626',
+                  fontWeight: 700,
+                }}
+                title={estaOnline ? 'Subiendo ventas guardadas sin conexión' : 'Sin conexión a internet'}
+              >
+                {estaOnline ? '🔄' : '🔌'} {ventasPendientes.length > 0 ? `${ventasPendientes.length} sin subir` : 'Sin conexión'}
+              </span>
+              <span style={styles.resumenSeparador}>·</span>
+            </>
+          )}
+
+          <div className="ledMiniVender">
+            <div className="ledMiniVenderScanlines" />
+            <div className="ledMiniVenderFade">
+              <div className="ledMiniVenderTicker">
+                <span className="ledMiniVenderTexto">{textoTicker}{'   •   '}{textoTicker}</span>
+              </div>
+            </div>
+          </div>
+
+          <span style={styles.resumenSeparador}>·</span>
+
+          <button
+            onClick={() => {
+              setMostrarBuscador(true)
+              setTimeout(() => inputBusquedaRef.current?.focus(), 100)
+            }}
+            style={{ ...styles.botonSecundarioHeader, backgroundColor: '#e0f2fe', color: '#0369a1' }}
+          >
+            🔍 Buscar Producto [F10]
+          </button>
           {puedeReimprimir && (
             <button
               onClick={reimprimirUltimoTicket}
               style={styles.botonSecundarioHeader}
               disabled={reimprimiendo}
             >
-              🖨️ {reimprimiendo ? 'Imprimiendo...' : 'Reimprimir Último [F9]'}
+              🖨️ {reimprimiendo ? 'Imprimiendo...' : 'Reimprimir [F5]'}
             </button>
           )}
           {puedeAplicarMayoreo && (
@@ -1860,53 +2041,46 @@ if (ultimaVenta.cliente_id) {
               style={{ ...styles.botonSecundarioHeader, backgroundColor: '#dbeafe', color: '#1d4ed8' }}
               disabled={items.length === 0}
             >
-              🏷️ Precio Mayor [F2]
+              🏷️ Mayoreo [F11]
             </button>
           )}
           <button
             onClick={abrirDevoluciones}
             style={styles.botonSecundarioHeader}
           >
-            🧾 Ventas y Devoluciones [F10]
+            🧾 Devoluciones [F6]
           </button>
           <button
-            onClick={abrirVerificadorPrecio}
-            style={{ ...styles.botonSecundarioHeader, backgroundColor: '#e0f2fe', color: '#0369a1' }}
-          >
-            💲 Verificar Precio [F3]
-          </button>
-          <button
-            onClick={() => setMostrarCalculadora(true)}
-            style={{ ...styles.botonSecundarioHeader, backgroundColor: '#ede9fe', color: '#6d28d9' }}
-          >
-            🧮 Calculadora
-          </button>
-          <div style={styles.tasa}>
-            <span style={styles.tasaLabel}>Tasa BCV</span>
-            <span style={styles.tasaValor}>Bs {formatearBs(tasaDolar)}</span>
-          </div>
-          <div style={styles.atajosContainer} className="info-header-movil">
-            <span style={styles.atajoChip}>
-              <span style={styles.atajoTecla}>F1</span>
-              Buscar
-            </span>
-            <span style={styles.atajoSeparador}>·</span>
-            <span style={styles.atajoChip}>
-              <span style={styles.atajoTecla}>F2</span>
-              Mayor
-            </span>
-            <span style={styles.atajoSeparador}>·</span>
-            <span style={styles.atajoChip}>
-              <span style={styles.atajoTecla}>F3</span>
-              Precio
-            </span>
-            <span style={styles.atajoSeparador}>·</span>
-            <span style={styles.atajoChip}>
-              <span style={styles.atajoTecla}>F12</span>
-              Cobrar
-            </span>
-            <span style={styles.atajoEscaner}>📷 Escanea en cualquier momento</span>
-          </div>
+  onClick={() => setMostrarCalculadora(true)}
+  style={{ ...styles.botonSecundarioHeader, backgroundColor: '#ede9fe', color: '#6d28d9' }}
+>
+  🧮 Calculadora
+</button>
+<span
+  style={{
+    ...styles.botonSecundarioHeader,
+    backgroundColor: '#fef3c7',
+    color: '#92400e',
+    cursor: 'default',
+  }}
+>
+  💱 Tasa: {tasaDolar > 0 ? tasaDolar.toFixed(2) : '—'}
+</span>
+<button
+  onClick={() => {
+    setMostrarBuscador(true)
+    setTimeout(() => inputBusquedaRef.current?.focus(), 100)
+  }}
+  style={{ ...styles.botonSecundarioHeader, backgroundColor: '#e0f2fe', color: '#0369a1' }}
+>
+  🔍 Buscar Producto [F10]
+</button>
+<button
+  onClick={() => setMostrarEscanerCamara(true)}
+  style={{ ...styles.botonSecundarioHeader, backgroundColor: '#dcfce7', color: '#166534' }}
+>
+  📷 Escanear
+</button>
         </div>
       </div>
 
@@ -1924,7 +2098,7 @@ if (ultimaVenta.cliente_id) {
         <div style={styles.tablaBody}>
           {items.length === 0 ? (
             <div style={styles.tablaVacia}>
-              <p>Presiona <strong>F1</strong> para buscar productos, o escanea un código de barras</p>
+              <p>Presiona <strong>F10</strong> para buscar productos, o escanea un código de barras</p>
             </div>
           ) : (
             items.map((item) => (
@@ -1991,7 +2165,8 @@ if (ultimaVenta.cliente_id) {
           )}
         </div>
       </div>
-<div className="carrito-movil">
+
+      <div className="carrito-movil">
         {items.length === 0 ? (
           <div className="estado-vacio-movil" style={{ textAlign: 'center', color: '#9ca3af', padding: '30px 10px' }}>
             Toca "Buscar Producto" para agregar artículos
@@ -2047,7 +2222,7 @@ if (ultimaVenta.cliente_id) {
           </div>
         </div>
         <div style={styles.botonesFooter} className="botones-footer-movil">
-        <button
+          <button
             onClick={() => {
               setMostrarBuscador(true)
               setTimeout(() => inputBusquedaRef.current?.focus(), 100)
@@ -2057,12 +2232,19 @@ if (ultimaVenta.cliente_id) {
           >
             🔍 Buscar Producto
           </button>
-        <button
+          <button
             onClick={() => setMostrarBuscarTickets(true)}
             className="boton-oculto-movil"
             style={{ ...styles.botonCancelar, backgroundColor: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
           >
-            🔍 Buscar Ticket
+            🔍 Buscar Ticket [F9]
+          </button>
+          <button
+            onClick={() => setMostrarEscanerCamara(true)}
+            className="boton-buscar-movil"
+            style={{ ...styles.botonCobrar, backgroundColor: '#059669' }}
+          >
+            📷 Escanear
           </button>
           <button
             onClick={() => setMostrarGuardarTicket(true)}
@@ -2070,7 +2252,7 @@ if (ultimaVenta.cliente_id) {
             style={{ ...styles.botonCancelar, backgroundColor: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }}
             disabled={items.length === 0}
           >
-            💾 Guardar Ticket
+            💾 Guardar Ticket [F8]
           </button>
           <button
             onClick={cancelarVenta}
@@ -2087,7 +2269,6 @@ if (ultimaVenta.cliente_id) {
               setPagoTarjeta(0)
               setPagoTransferencia(0)
               setPagoBiopago(0)
-              setPagoCreditoUsd(0)
               setClienteSeleccionadoId('')
               setBusquedaCliente('')
               setMostrarListaClientes(false)
@@ -2106,7 +2287,7 @@ if (ultimaVenta.cliente_id) {
         <div style={styles.modal} onClick={() => setMostrarBuscador(false)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <h2>Buscar Producto - F1</h2>
+              <h2>Buscar Producto - F10</h2>
               <button onClick={() => setMostrarBuscador(false)} style={styles.botonCerrar}>✕</button>
             </div>
             <input
@@ -2138,10 +2319,10 @@ if (ultimaVenta.cliente_id) {
                       <div style={{ textAlign: 'right' }}>
                         <span style={styles.precioProducto}>$ {p.precio.toFixed(2)}</span>
                         <span style={{ ...styles.stockProducto, color: '#2563eb', display: 'block', fontWeight: '600' }}>
-                          Bs {formatearBs(p.precio * tasaDolar)}
+                          Bs {formatearBs(p.precio * tasaEfectiva)}
                         </span>
                         <span style={{ fontSize: '14px', color: '#6b7280', display: 'block' }}>
-                          Mayor: $ {p.precio_mayoreo?.toFixed(2) || '0.00'} (Bs {formatearBs((p.precio_mayoreo || 0) * tasaDolar)})
+                          Mayor: $ {p.precio_mayoreo?.toFixed(2) || '0.00'} (Bs {formatearBs((p.precio_mayoreo || 0) * tasaEfectiva)})
                         </span>
                         <span style={styles.stockProducto}>Stock: {p.stock}</span>
                       </div>
@@ -2188,7 +2369,6 @@ if (ultimaVenta.cliente_id) {
               autoFocus
             />
 
-            {/* Solo consulta: nada de lo que se muestra aquí agrega productos a la venta */}
             {productoVerificado ? (
               <div style={{ padding: '0 24px 24px' }}>
                 <div style={{
@@ -2211,7 +2391,7 @@ if (ultimaVenta.cliente_id) {
                         $ {productoVerificado.precio.toFixed(2)}
                       </div>
                       <div style={{ fontSize: '15px', color: '#2563eb', fontWeight: 700 as const }}>
-                        Bs {formatearBs(productoVerificado.precio * tasaDolar)}
+                        Bs {formatearBs(productoVerificado.precio * tasaEfectiva)}
                       </div>
                     </div>
                     {productoVerificado.precio_mayoreo > 0 && (
@@ -2221,7 +2401,7 @@ if (ultimaVenta.cliente_id) {
                           $ {productoVerificado.precio_mayoreo.toFixed(2)}
                         </div>
                         <div style={{ fontSize: '15px', color: '#2563eb', fontWeight: 700 as const }}>
-                          Bs {formatearBs(productoVerificado.precio_mayoreo * tasaDolar)}
+                          Bs {formatearBs(productoVerificado.precio_mayoreo * tasaEfectiva)}
                         </div>
                       </div>
                     )}
@@ -2265,7 +2445,7 @@ if (ultimaVenta.cliente_id) {
                       <div style={{ textAlign: 'right' }}>
                         <span style={styles.precioProducto}>$ {p.precio.toFixed(2)}</span>
                         <span style={{ ...styles.stockProducto, color: '#2563eb', display: 'block', fontWeight: '600' }}>
-                          Bs {formatearBs(p.precio * tasaDolar)}
+                          Bs {formatearBs(p.precio * tasaEfectiva)}
                         </span>
                         <span style={styles.stockProducto}>Stock: {p.stock}</span>
                       </div>
@@ -2279,7 +2459,6 @@ if (ultimaVenta.cliente_id) {
       )}
 
       {mostrarEditar && productoEditando && (
-
         <div style={styles.modal} onClick={() => setMostrarEditar(false)}>
           <div style={estilosEditar.modalEditar} onClick={(e) => e.stopPropagation()}>
             <div style={estilosEditar.headerEditar}>
@@ -2396,7 +2575,7 @@ if (ultimaVenta.cliente_id) {
             border: '1px solid #e2e8f0',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
           }} className="cobro-modal-mobile">
-          <div style={{
+            <div style={{
               ...styles.modalHeader,
               padding: '18px 24px',
               background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
@@ -2417,11 +2596,7 @@ if (ultimaVenta.cliente_id) {
               }}>✕</button>
             </div>
 
-            {/* Contenido: todo en una sola vista, sin scroll. Columna izquierda con
-                el total y el cliente, columna derecha con los métodos de pago en grilla. */}
             <div style={{ padding: '28px 32px', display: 'grid', gridTemplateColumns: '260px 1fr', gap: '28px' }} className="cobro-grid-mobile">
-
-              {/* ---------- Columna izquierda: total + cliente + restante ---------- */}
               <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '20px' }}>
                 <div style={{
                   background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
@@ -2558,7 +2733,6 @@ if (ultimaVenta.cliente_id) {
                 </div>
               </div>
 
-              {/* ---------- Columna derecha: métodos de pago en grilla, todos visibles ---------- */}
               <div style={{ display: 'flex', flexDirection: 'column' as const }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '18px' }} className="cobro-metodos-mobile">
                   <div>
@@ -2584,7 +2758,7 @@ if (ultimaVenta.cliente_id) {
                     />
                     {pagoEfectivoUsd > 0 && (
                       <span style={{ fontSize: '13px', color: '#059669', fontWeight: '600' }}>
-                        ≈ Bs {formatearBs(pagoEfectivoUsd * tasaDolar)}
+                        ≈ Bs {formatearBs(pagoEfectivoUsd * tasaEfectiva)}
                       </span>
                     )}
                   </div>
@@ -2622,37 +2796,40 @@ if (ultimaVenta.cliente_id) {
                     />
                   </div>
 
-                  {/* ---------- Crédito ---------- */}
-                  {puedeVentaCredito && (
-                    <div style={{
-                      border: '2px solid #fde68a',
-                      backgroundColor: '#fffbeb',
-                      borderRadius: '12px',
-                      padding: '10px 12px',
-                    }}>
-                      <label style={{ ...styles.labelElegante, marginBottom: '6px' }}>🧾 Crédito $</label>
-                      <input
-                        type="number"
-                        value={pagoCreditoUsd || ''}
-                        onChange={(e) => setPagoCreditoUsd(Number(e.target.value) || 0)}
-                        style={{ ...styles.inputElegante, padding: '14px 14px', fontSize: '17px' }}
-                        placeholder="0.00"
-                      />
-                    </div>
-                  )}
                 </div>
 
-                {puedeVentaCredito && pagoCreditoUsd > 0 && !clienteSeleccionadoId && (
-                  <div style={{ fontSize: '14px', color: '#dc2626', marginTop: '14px', fontWeight: '600' }}>
-                    ⚠️ Selecciona un cliente para facturar a crédito
-                  </div>
-                )}
-
-                {puedeVentaCredito && pagoCreditoUsd > 0 && clienteSeleccionado && (
-                  <div style={{ fontSize: '14px', color: '#92400e', marginTop: '14px' }}>
-                    {clienteSeleccionado.tipo_credito === 'ilimitado'
-                      ? 'Este cliente tiene crédito ilimitado.'
-                      : `Disponible: $${(creditoDisponible ?? 0).toFixed(2)} (saldo actual: $${saldoClienteSeleccionado.toFixed(2)})`}
+                {puedeVentaCredito && clienteSeleccionado && clienteSeleccionado.tipo_credito !== 'contado' && (
+                  <div style={{
+                    border: '2px solid #fde68a',
+                    backgroundColor: '#fffbeb',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    marginTop: '18px',
+                  }}>
+                    <div style={{ fontSize: '14px', color: '#92400e', marginBottom: '10px' }}>
+                      {cargandoDeudaCliente
+                        ? 'Consultando deuda actual...'
+                        : clienteSeleccionado.tipo_credito === 'ilimitado'
+                          ? 'Este cliente tiene crédito ilimitado.'
+                          : `Disponible: $${(creditoDisponible ?? 0).toFixed(2)} (debe actualmente: $${saldoClienteSeleccionado.toFixed(2)})`}
+                    </div>
+                    <button
+                      onClick={facturarACredito}
+                      disabled={facturandoCredito || items.length === 0}
+                      style={{
+                        width: '100%',
+                        backgroundColor: facturandoCredito ? '#d1d5db' : '#f59e0b',
+                        color: 'white',
+                        border: 'none',
+                        padding: '14px',
+                        borderRadius: '10px',
+                        cursor: facturandoCredito ? 'not-allowed' : 'pointer',
+                        fontWeight: '800',
+                        fontSize: '15px',
+                      }}
+                    >
+                      {facturandoCredito ? 'GUARDANDO...' : '📝 Facturar a Crédito (sin cobrar)'}
+                    </button>
                   </div>
                 )}
 
@@ -2725,10 +2902,7 @@ if (ultimaVenta.cliente_id) {
               >✕</button>
             </div>
 
-            {/* Panel dividido: lista de tickets a la izquierda, detalle a la derecha */}
             <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-
-              {/* ---------- Columna izquierda: buscador + filtro + lista ---------- */}
               <div style={{
                 width: '280px',
                 flexShrink: 0,
@@ -2824,7 +2998,6 @@ if (ultimaVenta.cliente_id) {
                   </div>
                 </div>
 
-                {/* Encabezado de columnas: Folio | Hora/Fecha | Total */}
                 <div style={{
                   display: 'flex',
                   padding: '6px 12px',
@@ -2880,7 +3053,6 @@ if (ultimaVenta.cliente_id) {
                 </div>
               </div>
 
-              {/* ---------- Columna derecha: detalle del ticket seleccionado ---------- */}
               <div style={{ flex: 1, overflowY: 'auto' as const, padding: '14px 18px' }}>
                 {!ventaParaAnular ? (
                   <div style={{
@@ -2919,7 +3091,6 @@ if (ultimaVenta.cliente_id) {
                       <span>{new Date(ventaParaAnular.created_at).toLocaleString('es-VE')}</span>
                     </div>
 
-                    {/* ---------- Método(s) de pago con el que se canceló este ticket ---------- */}
                     {(() => {
                       const metodos: { label: string; valor: string }[] = []
                       if (Number(ventaParaAnular.pago_efectivo_bs || 0) > 0) metodos.push({ label: '💵 Efectivo Bs', valor: `Bs ${formatearBs(Number(ventaParaAnular.pago_efectivo_bs))}` })
@@ -2950,7 +3121,6 @@ if (ultimaVenta.cliente_id) {
                       )
                     })()}
 
-                    {/* Contenedor relativo para poder poner el sello de CANCELADO encima */}
                     <div style={{ position: 'relative' as const }}>
                       {ventaParaAnular.anulada && (
                         <div style={{
@@ -3069,7 +3239,7 @@ if (ultimaVenta.cliente_id) {
           </div>
         </div>
       )}
-{mostrarGuardarTicket && (
+      {mostrarGuardarTicket && (
         <div style={styles.modal} onClick={() => !guardandoTicket && setMostrarGuardarTicket(false)}>
           <div style={{ ...styles.modalContentSmall, maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
@@ -3155,6 +3325,41 @@ if (ultimaVenta.cliente_id) {
           </div>
         </div>
       )}
+      {mostrarCambiarTasa && (
+        <div style={styles.modal} onClick={() => !guardandoTasa && setMostrarCambiarTasa(false)}>
+          <div style={{ ...styles.modalContentSmall, maxWidth: '360px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={{ fontSize: '18px' }}>💱 Cambiar Tasa del Día</h2>
+              <button onClick={() => setMostrarCambiarTasa(false)} style={styles.botonCerrar}>✕</button>
+            </div>
+            <div style={{ padding: '20px 24px' }}>
+              <label style={styles.labelElegante}>Nueva tasa (Bs por $)</label>
+              <input
+                type="number"
+                value={nuevaTasaInput}
+                onChange={(e) => setNuevaTasaInput(e.target.value)}
+                placeholder="Ej: 75.50"
+                style={{ ...styles.inputElegante, padding: '12px 12px' }}
+                step="0.01"
+                min="0"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') guardarNuevaTasa() }}
+              />
+              <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px' }}>
+                Tasa actual: {tasaDolar > 0 ? tasaDolar.toFixed(2) : '—'}
+              </div>
+              <button
+                onClick={guardarNuevaTasa}
+                disabled={guardandoTasa}
+                style={{ ...styles.botonGuardar, marginTop: '18px' }}
+              >
+                {guardandoTasa ? 'Guardando...' : 'Guardar Tasa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mostrarCalculadora && (
         <div style={styles.modal} onClick={() => setMostrarCalculadora(false)}>
           <div style={{ ...styles.modalContentSmall, maxWidth: '340px' }} onClick={(e) => e.stopPropagation()}>
@@ -3212,15 +3417,127 @@ if (ultimaVenta.cliente_id) {
           </div>
         </div>
       )}
+      {mostrarEscanerCamara && (
+  <EscanerCamara
+    onDetectado={(codigo) => {
+      setMostrarEscanerCamara(false)
+      buscarYAgregarPorCodigo(codigo)
+    }}
+    onCerrar={() => setMostrarEscanerCamara(false)}
+  />
+)}
     </div>
   )
 }
 
-const styles = {
+const estiloBotonBuscarMovil = (
+  <style jsx global>{`
+    .boton-buscar-movil { display: none; }
+    .carrito-movil { display: none; }
+    @media (max-width: 768px) {
+      .boton-buscar-movil { display: inline-flex !important; }
+      .tabla-desktop-pos { display: none !important; }
+      .header-desktop-vender { display: none !important; }
+      .carrito-movil {
+        display: flex !important;
+        flex-direction: column;
+        gap: 10px;
+        padding: 4px 2px 12px;
+      }
+      .botones-footer-movil {
+        flex-wrap: wrap !important;
+      }
+      .boton-oculto-movil {
+        display: none !important;
+      }
+      .boton-cobrar-movil {
+        flex: 1 1 100% !important;
+        order: 10 !important;
+      }
+      .tarjeta-item-movil {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        padding: 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      }
+      .tarjeta-item-movil-nombre { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 2px; }
+      .tarjeta-item-movil-codigo { font-size: 12px; color: #9ca3af; margin-bottom: 10px; }
+      .tarjeta-item-movil-fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .stepper-cantidad { display: flex; align-items: center; background: #f3f4f6; border-radius: 10px; overflow: hidden; }
+      .stepper-boton { width: 38px; height: 38px; border: none; background: #e5e7eb; font-size: 20px; font-weight: 700; color: #374151; cursor: pointer; }
+      .stepper-valor { width: 44px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; }
+      .toggle-mayoreo-movil { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+      .footer-movil {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 12px !important;
+      }
+      .total-container-movil {
+        justify-content: space-between !important;
+        gap: 12px !important;
+      }
+      .total-valor-movil {
+        font-size: 22px !important;
+        word-break: break-word;
+      }
+
+      .cobro-overlay-mobile {
+        align-items: stretch !important;
+        justify-content: stretch !important;
+        padding: 0 !important;
+      }
+      .cobro-modal-mobile {
+        width: 100% !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        overflow-y: auto !important;
+      }
+      .cobro-grid-mobile {
+        grid-template-columns: 1fr !important;
+        padding: 14px 16px !important;
+        gap: 14px !important;
+      }
+      .cobro-metodos-mobile {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 10px !important;
+      }
+      .cobro-botones-mobile {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 10px !important;
+        padding-top: 16px !important;
+      }
+      .info-header-movil {
+        display: none !important;
+      }
+      .estado-vacio-movil {
+        display: none !important;
+      }
+      .contenedor-principal-movil {
+      height: auto !important;
+      min-height: 100vh !important;
+      overflow-y: auto !important;
+      padding-bottom: 90px !important;
+      }
+      .footer-fijo-movil {
+        position: fixed !important;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        border-radius: 0 !important;
+      }
+    }
+  `}</style>
+)
+
+const styles: Record<string, React.CSSProperties> = {
   container: {
     padding: '16px 20px',
     backgroundColor: '#f9fafb',
-    height: '100vh',
+    height: '100%',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column' as const,
@@ -3229,120 +3546,43 @@ const styles = {
   },
   header: {
     backgroundColor: 'white',
-    padding: '16px 20px',
-    borderRadius: '12px',
-    marginBottom: '14px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    padding: '8px 16px',
+    borderRadius: '10px',
+    marginBottom: '10px',
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #e5e7eb',
     flexShrink: 0,
-    flexWrap: 'wrap' as const,
-    rowGap: '12px',
   },
-  titulo: {
-    margin: 0,
-    fontSize: '22px',
-    fontWeight: '700',
-    color: '#111827'
-  },
-  botonVolver: {
-    backgroundColor: '#f3f4f6',
-    border: '1px solid #e5e7eb',
-    padding: '8px 14px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontWeight: '500',
-    fontSize: '15px',
-    color: '#374151'
-  },
-  headerRight: {
+  headerUnica: {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    flexWrap: 'wrap' as const,
-    rowGap: '8px',
-    justifyContent: 'flex-end' as const,
+    gap: '6px',
+    flexWrap: 'nowrap' as const,
+  },
+  resumenItem: {
+    color: '#374151',
+    whiteSpace: 'nowrap' as const,
+    fontSize: '12.5px',
+  },
+  resumenSub: {
+    color: '#9ca3af',
+    fontWeight: 400,
+  },
+  resumenSeparador: {
+    color: '#cbd5e1',
+    flexShrink: 0,
   },
   botonSecundarioHeader: {
     backgroundColor: '#f3f4f6',
     border: '1px solid #e5e7eb',
-    padding: '8px 12px',
-    borderRadius: '8px',
+    padding: '6px 9px',
+    borderRadius: '7px',
     cursor: 'pointer',
     fontWeight: '600',
-    fontSize: '14px',
+    fontSize: '12px',
     color: '#374151',
-    whiteSpace: 'nowrap' as const
-  },
-  tasa: {
-    backgroundColor: '#f3f4f6',
-    padding: '8px 14px',
-    borderRadius: '8px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'flex-end',
-    border: '1px solid #e5e7eb'
-  },
-  tasaLabel: {
-    fontSize: '13px',
-    color: '#6b7280'
-  },
-  tasaValor: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#111827'
-  },
-  ayuda: {
-    fontSize: '14px',
-    color: '#6b7280',
-    backgroundColor: '#f3f4f6',
-    padding: '6px 12px',
-    borderRadius: '6px'
-  },
-  atajosContainer: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    flexWrap: 'wrap' as const,
-    backgroundColor: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: '10px',
-    padding: '7px 12px',
-  },
-  atajoChip: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '13px',
-    fontWeight: '600' as const,
-    color: '#475569',
     whiteSpace: 'nowrap' as const,
-  },
-  atajoTecla: {
-    backgroundColor: '#1e293b',
-    color: 'white',
-    fontFamily: '"SF Mono", "Courier New", monospace',
-    fontSize: '11px',
-    fontWeight: '700' as const,
-    padding: '2px 6px',
-    borderRadius: '5px',
-    letterSpacing: '0.3px',
-    lineHeight: '1.5',
-  },
-  atajoSeparador: {
-    color: '#cbd5e1',
-    fontSize: '14px',
-  },
-  atajoEscaner: {
-    fontSize: '13px',
-    fontWeight: '600' as const,
-    color: '#0369a1',
-    backgroundColor: '#e0f2fe',
-    padding: '3px 10px',
-    borderRadius: '999px',
-    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
   },
   tablaContainer: {
     backgroundColor: 'white',
@@ -3622,7 +3862,7 @@ const styles = {
   }
 }
 
-const estilosEditar = {
+const estilosEditar: Record<string, React.CSSProperties> = {
   modalEditar: {
     backgroundColor: 'white',
     borderRadius: '18px',

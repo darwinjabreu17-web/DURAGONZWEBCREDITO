@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-// GET: ventas y abonos de un día, ya combinados -> ?fecha=YYYY-MM-DD
+// GET: ventas y pagos de crédito de un día, ya combinados -> ?fecha=YYYY-MM-DD
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const fecha = searchParams.get('fecha')
@@ -18,33 +18,19 @@ export async function GET(request: Request) {
 
   if (errorVentas) return NextResponse.json({ error: errorVentas.message }, { status: 500 })
 
-  const { data: abonosCrudos, error: errorAbonos } = await supabaseAdmin
-    .from('creditos_abonos')
+  // Pagos de crédito (abonos y pagos totales) del día — ya vienen con la
+  // ganancia calculada de una vez por la función aplicar_pago_credito,
+  // no hace falta recalcular nada aquí.
+  const { data: pagosCredito, error: errorPagos } = await supabaseAdmin
+    .from('creditos_pagos')
     .select('*')
     .gte('created_at', `${fecha}T00:00:00-04:00`)
     .lte('created_at', `${fecha}T23:59:59-04:00`)
+    .order('created_at', { ascending: false })
 
-  if (errorAbonos) return NextResponse.json({ error: errorAbonos.message }, { status: 500 })
+  if (errorPagos) return NextResponse.json({ error: errorPagos.message }, { status: 500 })
 
-  const ventas = ventasData || []
-  const abonosCrudosList = abonosCrudos || []
-
-  let mapaVentasOrigen: Record<number, any> = {}
-  if (abonosCrudosList.length > 0) {
-    const idsVentasOrigen = [...new Set(abonosCrudosList.map((a: any) => a.venta_id))]
-    const { data: ventasOrigen, error: errorVentasOrigen } = await supabaseAdmin
-      .from('ventas')
-      .select('id, ganancia_usd, total_usd, pago_credito_usd, cliente_id')
-      .in('id', idsVentasOrigen)
-
-    if (errorVentasOrigen) return NextResponse.json({ error: errorVentasOrigen.message }, { status: 500 })
-
-    ;(ventasOrigen || []).forEach((v: any) => { mapaVentasOrigen[v.id] = v })
-  }
-
-  const abonos = abonosCrudosList.map((a: any) => ({ ...a, ventas: mapaVentasOrigen[a.venta_id] }))
-
-  return NextResponse.json({ ventas, abonos })
+  return NextResponse.json({ ventas: ventasData || [], abonos: pagosCredito || [] })
 }
 
 // POST: guarda el cierre de caja del día (upsert en reportes_diarios)
