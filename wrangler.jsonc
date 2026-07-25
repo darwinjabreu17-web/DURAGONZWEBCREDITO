@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "duragonzwebcredito",
+  "name": "abasto-losguajiros-bellavista",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-07-24",
   "compatibility_flags": ["nodejs_compat"],
