@@ -1,17 +1,28 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",  // Esto ya lo tenías, no lo toques
-  "name": "duragonzwebcredito",                             // Nombre de tu Worker, ya lo tenías
-  "main": ".open-next/worker.js",                           // Ya lo tenías
-  "compatibility_date": "2026-07-24",                       // Ya lo tenías
-  "compatibility_flags": ["nodejs_compat"],                 // Ya lo tenías
-  "assets": {                                                // Ya lo tenías
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "duragonzwebcredito",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  "vars": {                                                  // ESTO ES LO NUEVO que vamos a agregar
+  "vars": {
     "NEXT_PUBLIC_SUPABASE_URL": "https://ybettztafemxgeyyldjw.supabase.co",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_ROmonvfNvcIf1MIKvrF4ig_mQkO3ekh",
     "LICENCIAS_SUPABASE_URL": "https://ybettztafemxgeyyldjw.supabase.co",
     "LICENCIA_PUBLIC_KEY": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAB8+hjXvDQXvYk6FZTYSwMpPZYoJ24dZ5r97f41vn0ZA=\n-----END PUBLIC KEY-----"
+  },
+  "env": {
+    "abastos-guajiros": {
+      "name": "abasto-losguajiros-bellavista",
+      "vars": {
+        "NEXT_PUBLIC_SUPABASE_URL": "https://gdkqnzcinxzhdfjbusfk.supabase.co",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdka3FuemNpbnh6aGRmamJ1c2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5MzkzMDgsImV4cCI6MjEwMDUxNTMwOH0.syXraZ8IUyY6Cd7iVccBm2knFMwkkda4WLBH6aZFZyE",
+        "LICENCIAS_SUPABASE_URL": "https://ybettztafemxgeyyldjw.supabase.co",
+        "LICENCIA_PUBLIC_KEY": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAB8+hjXvDQXvYk6FZTYSwMpPZYoJ24dZ5r97f41vn0ZA=\n-----END PUBLIC KEY-----"
+      }
+    }
   }
 }
