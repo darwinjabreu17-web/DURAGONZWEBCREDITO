@@ -3957,4 +3957,4 @@ const estilosEditar: Record<string, React.CSSProperties> = {
     boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)',
   },
 }
-// prueba deploy
+// prueba deploy.
