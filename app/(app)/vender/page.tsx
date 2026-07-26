@@ -158,6 +158,7 @@ export default function Vender() {
 
   const [items, setItems] = useState<ItemVenta[]>([])
   const [itemSeleccionadoId, setItemSeleccionadoId] = useState<number | null>(null)
+  const [cantidadTexto, setCantidadTexto] = useState<Record<number, string>>({})
   const [busqueda, setBusqueda] = useState('')
   const [mostrarBuscador, setMostrarBuscador] = useState(false)
   const [mostrarCobro, setMostrarCobro] = useState(false)
@@ -915,6 +916,38 @@ useEffect(() => {
         item.id === id ? { ...item, cantidad } : item
       ))
     }
+  }
+
+  // Mientras el usuario escribe (ej. "0.25"), solo actualizamos el texto visible
+  // y, si ya forma un número válido y mayor a 0, actualizamos la cantidad real
+  // SIN aplicar la lógica de eliminación. Así no se borra el producto al pasar
+  // por "0" de camino a escribir "0.25".
+  const manejarTextoCantidad = (id: number, texto: string) => {
+    setCantidadTexto(prev => ({ ...prev, [id]: texto }))
+
+    const valor = parseFloat(texto)
+    if (!isNaN(valor) && valor > 0) {
+      const item = items.find(i => i.id === id)
+      if (!item) return
+      if (valor > item.stock) return
+      setItems(items.map(item =>
+        item.id === id ? { ...item, cantidad: valor } : item
+      ))
+    }
+  }
+
+  // Al salir del campo (blur) o presionar Enter, se confirma el valor final.
+  // Si quedó vacío, en 0, o inválido, ahí sí se elimina el producto.
+  const confirmarCantidad = (id: number) => {
+    const texto = cantidadTexto[id]
+    setCantidadTexto(prev => {
+      const nuevo = { ...prev }
+      delete nuevo[id]
+      return nuevo
+    })
+    if (texto === undefined) return
+    const valor = parseFloat(texto)
+    cambiarCantidad(id, isNaN(valor) ? 0 : valor)
   }
 
   const eliminarItem = (id: number) => {
@@ -2139,8 +2172,11 @@ const facturarACredito = async () => {
                 <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                   <input
                     type="number"
-                    value={item.cantidad}
-                    onChange={(e) => cambiarCantidad(item.id, parseFloat(e.target.value) || 0)}
+                    value={cantidadTexto[item.id] !== undefined ? cantidadTexto[item.id] : String(item.cantidad)}
+                    onChange={(e) => manejarTextoCantidad(item.id, e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={() => confirmarCantidad(item.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                     style={styles.inputCantidad}
                     step="0.001"
                     max={item.stock}
@@ -2179,7 +2215,17 @@ const facturarACredito = async () => {
               <div className="tarjeta-item-movil-fila">
                 <div className="stepper-cantidad">
                   <button className="stepper-boton" onClick={() => cambiarCantidad(item.id, item.cantidad - 1)}>−</button>
-                  <span className="stepper-valor">{item.cantidad}</span>
+                  <input
+                    type="number"
+                    className="stepper-valor-input"
+                    value={cantidadTexto[item.id] !== undefined ? cantidadTexto[item.id] : String(item.cantidad)}
+                    onChange={(e) => manejarTextoCantidad(item.id, e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={() => confirmarCantidad(item.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    step="0.001"
+                    max={item.stock}
+                  />
                   <button className="stepper-boton" onClick={() => cambiarCantidad(item.id, item.cantidad + 1)}>+</button>
                 </div>
                 {puedeAplicarMayoreo && item.precio_mayoreo > 0 && (
@@ -3467,6 +3513,8 @@ const estiloBotonBuscarMovil = (
       .stepper-cantidad { display: flex; align-items: center; background: #f3f4f6; border-radius: 10px; overflow: hidden; }
       .stepper-boton { width: 38px; height: 38px; border: none; background: #e5e7eb; font-size: 20px; font-weight: 700; color: #374151; cursor: pointer; }
       .stepper-valor { width: 44px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; }
+      .stepper-valor-input { width: 50px; text-align: center; font-size: 16px; font-weight: 700; color: #111827; border: none; background: transparent; -moz-appearance: textfield; }
+      .stepper-valor-input::-webkit-outer-spin-button, .stepper-valor-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .toggle-mayoreo-movil { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
 
       .footer-movil {
@@ -3957,4 +4005,3 @@ const estilosEditar: Record<string, React.CSSProperties> = {
     boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)',
   },
 }
-// prueba deploy
