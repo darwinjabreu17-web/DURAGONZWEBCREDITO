@@ -22,6 +22,12 @@ interface ItemVenta extends Producto {
   precioDetalle: number
 }
 
+interface TicketAbierto {
+  id: number
+  items: ItemVenta[]
+  clienteId: number | ''
+}
+
 interface Cliente {
   id: number
   nombre: string
@@ -97,6 +103,14 @@ function formatearBs(numero: number): string {
   return new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numero)
 }
 
+// Redondea un importe hacia arriba al centavo más cercano (nunca hacia abajo),
+// para que al vender cantidades fraccionadas (ej. medio producto) la ganancia
+// no se pierda por el redondeo. Corrige antes el error de coma flotante de JS.
+function redondearImporte(valor: number): number {
+  const valorCorregido = Math.round(valor * 1e6) / 1e6
+  return Math.ceil(valorCorregido * 100) / 100
+}
+
 function formatearHaceTiempo(fechaIso: string): string {
   const fecha = new Date(fechaIso)
   const ahora = new Date()
@@ -156,7 +170,63 @@ export default function Vender() {
   const puedeEditarPrecioCosto = esAdmin || !!sesion?.permisos?.editar_precio_costo
   const puedeCambiarTasa = esAdmin || !!sesion?.permisos?.cambiar_tasa
 
-  const [items, setItems] = useState<ItemVenta[]>([])
+  const CLAVE_TICKETS_ABIERTOS = 'pos_tickets_abiertos_v1'
+
+  function cargarTicketsGuardados(): TicketAbierto[] {
+    if (typeof window === 'undefined') return [{ id: 1, items: [], clienteId: '' }]
+    try {
+      const guardado = window.localStorage.getItem(CLAVE_TICKETS_ABIERTOS)
+      if (guardado) {
+        const parsed = JSON.parse(guardado)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+    return [{ id: 1, items: [], clienteId: '' }]
+  }
+
+  const [tickets, setTickets] = useState<TicketAbierto[]>(cargarTicketsGuardados)
+  const [ticketActivoId, setTicketActivoId] = useState<number>(() => cargarTicketsGuardados()[0].id)
+
+  // Guarda automáticamente los tickets abiertos para que no se pierdan si se cierra el sistema
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(CLAVE_TICKETS_ABIERTOS, JSON.stringify(tickets))
+    } catch {}
+  }, [tickets])
+
+  const ticketActivo = tickets.find(t => t.id === ticketActivoId) ?? tickets[0]
+  const items = ticketActivo.items
+
+  // Mantiene el resto del código sin cambios: setItems sigue funcionando igual,
+  // pero ahora guarda los productos dentro del ticket que esté activo.
+  const setItems = (valor: ItemVenta[]) => {
+    setTickets(prev => prev.map(t => t.id === ticketActivoId ? { ...t, items: valor } : t))
+  }
+
+  const agregarTicket = () => {
+    const nuevoId = tickets.length > 0 ? Math.max(...tickets.map(t => t.id)) + 1 : 1
+    setTickets(prev => [...prev, { id: nuevoId, items: [], clienteId: '' }])
+    setTicketActivoId(nuevoId)
+    setItemSeleccionadoId(null)
+  }
+
+  const cerrarTicket = (id: number) => {
+    const ticket = tickets.find(t => t.id === id)
+    if (ticket && ticket.items.length > 0) {
+      const confirmar = confirm(`El Ticket ${id} tiene ${ticket.items.length} producto(s) agregado(s). ¿Cerrarlo de todas formas? Se perderán esos productos.`)
+      if (!confirmar) return
+    }
+
+    const restantes = tickets.filter(t => t.id !== id)
+    setTickets(restantes.length > 0 ? restantes : [{ id: 1, items: [], clienteId: '' }])
+
+    if (ticketActivoId === id) {
+      setTicketActivoId(restantes.length > 0 ? restantes[0].id : 1)
+      setItemSeleccionadoId(null)
+    }
+  }
+
   const [itemSeleccionadoId, setItemSeleccionadoId] = useState<number | null>(null)
   const [cantidadTexto, setCantidadTexto] = useState<Record<number, string>>({})
   const [busqueda, setBusqueda] = useState('')
@@ -386,7 +456,7 @@ useEffect(() => {
         nombre: item.nombre,
         cantidad: item.cantidad,
         precio_unitario: item.precio,
-        subtotal: item.precio * item.cantidad,
+        subtotal: redondearImporte(item.precio * item.cantidad),
       })),
     }
 
@@ -573,7 +643,10 @@ useEffect(() => {
   const [procesandoVenta, setProcesandoVenta] = useState(false)
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [saldos, setSaldos] = useState<Record<number, number>>({})
-  const [clienteSeleccionadoId, setClienteSeleccionadoId] = useState<number | ''>('')
+  const clienteSeleccionadoId = ticketActivo.clienteId
+  const setClienteSeleccionadoId = (valor: number | '') => {
+    setTickets(prev => prev.map(t => t.id === ticketActivoId ? { ...t, clienteId: valor } : t))
+  }
 
   const [busquedaCliente, setBusquedaCliente] = useState('')
   const [mostrarListaClientes, setMostrarListaClientes] = useState(false)
@@ -965,7 +1038,7 @@ useEffect(() => {
     }
   }
 
-  const totalDolares = items.reduce((sum, item) => sum + (item.precio * item.cantidad), 0)
+  const totalDolares = items.reduce((sum, item) => sum + redondearImporte(item.precio * item.cantidad), 0)
   const tasaEfectiva = tasaDolar > 0 ? tasaDolar : 1
   const totalBs = totalDolares * tasaEfectiva
   const totalPagadoBs =
@@ -1038,7 +1111,7 @@ useEffect(() => {
         <td style="text-align:left;padding:2px ${padCelda}px 2px 0;word-break:break-word;">${item.nombre}</td>
         <td style="text-align:center;padding:2px ${padCelda}px;">${item.cantidad}</td>
         <td style="text-align:right;padding:2px ${padCelda}px;">${item.precio.toFixed(2)}</td>
-        <td style="text-align:right;padding:2px 0;">${(item.precio * item.cantidad).toFixed(2)}</td>
+        <td style="text-align:right;padding:2px 0;">${redondearImporte(item.precio * item.cantidad).toFixed(2)}</td>
       </tr>
     `).join('')
 
@@ -1194,7 +1267,7 @@ useEffect(() => {
             nombre: item.nombre,
             cantidad: item.cantidad,
             precio_unitario: item.precio,
-            subtotal: item.precio * item.cantidad,
+            subtotal: redondearImporte(item.precio * item.cantidad),
           })),
         })
       })
@@ -1230,7 +1303,7 @@ useEffect(() => {
         nombre_producto: item.nombre,
         cantidad: item.cantidad,
         precio_unitario: item.precio,
-        subtotal: item.precio * item.cantidad,
+        subtotal: redondearImporte(item.precio * item.cantidad),
       }))
 
       const { error: errorItems } = await fetchConReintento('/api/venta-items', {
@@ -2117,8 +2190,47 @@ const facturarACredito = async () => {
         </div>
       </div>
 
+      <div style={estilosTickets.barra}>
+        <div style={estilosTickets.lista}>
+          {tickets.map((t) => {
+            const activo = t.id === ticketActivoId
+            return (
+              <div
+                key={t.id}
+                onClick={() => { setTicketActivoId(t.id); setItemSeleccionadoId(null) }}
+                style={{ ...estilosTickets.pestana, ...(activo ? estilosTickets.pestanaActiva : {}) }}
+              >
+                <span style={{ ...estilosTickets.punto, ...(activo ? estilosTickets.puntoActivo : {}) }} />
+                <span style={estilosTickets.texto}>
+                  Ticket {t.id}
+                  {t.items.length > 0 && (
+                    <span style={{ ...estilosTickets.contador, ...(activo ? estilosTickets.contadorActivo : {}) }}>
+                      {t.items.length}
+                    </span>
+                  )}
+                </span>
+                <button
+                  style={estilosTickets.cerrar}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    cerrarTicket(t.id)
+                  }}
+                  title="Cerrar ticket"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <button style={estilosTickets.agregar} onClick={agregarTicket} title="Agregar nuevo ticket">
+          +
+        </button>
+      </div>
+
       <div style={styles.tablaContainer} className="tabla-desktop-pos">
         <div style={styles.tablaHeader}>
+
           <div style={{ ...styles.col, flex: '0 0 90px' }}>Código</div>
           <div style={{ ...styles.col, flex: '1' }}>Descripción</div>
           <div style={{ ...styles.col, flex: '0 0 90px', textAlign: 'center' }}>Stock</div>
@@ -2147,14 +2259,14 @@ const facturarACredito = async () => {
                 }}
               >
                 <div style={{ ...styles.col, flex: '0 0 90px' }}>{item.codigo}</div>
-                <div style={{ ...styles.col, flex: '1' }}>{item.nombre}</div>
+                <div style={{ ...styles.col, flex: '1', fontWeight: 700 }}>{item.nombre}</div>
                 <div style={{ ...styles.col, flex: '0 0 90px', textAlign: 'center' }}>
                   <span style={{
                     backgroundColor: item.stock > 10 ? '#dcfce7' : '#fee2e2',
                     color: item.stock > 10 ? '#166534' : '#dc2626',
-                    padding: '5px 10px',
-                    borderRadius: '6px',
-                    fontSize: '15px',
+                    padding: '2px 8px',
+                    borderRadius: '5px',
+                    fontSize: '12px',
                     fontWeight: '600'
                   }}>
                     {item.stock}
@@ -2183,7 +2295,7 @@ const facturarACredito = async () => {
                   />
                 </div>
                 <div style={{ ...styles.col, flex: '0 0 130px', textAlign: 'right', fontWeight: '600' }}>
-                  {(item.precio * item.cantidad).toFixed(2)}
+                  {redondearImporte(item.precio * item.cantidad).toFixed(2)}
                 </div>
                 <div style={{ ...styles.col, flex: '0 0 55px', textAlign: 'center' }}>
                   <button
@@ -2242,7 +2354,7 @@ const facturarACredito = async () => {
                 )}
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '17px', fontWeight: 800, color: '#059669' }}>
-                    $ {(item.precio * item.cantidad).toFixed(2)}
+                    $ {redondearImporte(item.precio * item.cantidad).toFixed(2)}
                   </div>
                   <button
                     onClick={() => eliminarItem(item.id)}
@@ -3594,9 +3706,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     backgroundColor: 'white',
-    padding: '8px 16px',
+    padding: '5px 16px',
     borderRadius: '10px',
-    marginBottom: '10px',
+    marginBottom: '4px',
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #e5e7eb',
     flexShrink: 0,
@@ -3638,7 +3750,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #e5e7eb',
     overflow: 'hidden',
-    marginBottom: '14px',
+    marginBottom: '8px',
     flex: 1,
     display: 'flex',
     flexDirection: 'column' as const,
@@ -3647,15 +3759,15 @@ const styles: Record<string, React.CSSProperties> = {
   tablaHeader: {
     display: 'flex',
     backgroundColor: '#f9fafb',
-    padding: '14px 16px',
+    padding: '7px 14px',
     borderBottom: '2px solid #e5e7eb',
     fontWeight: '700',
-    fontSize: '15px',
+    fontSize: '12px',
     color: '#374151',
     flexShrink: 0,
   },
   col: {
-    padding: '0 8px'
+    padding: '0 6px'
   },
   tablaBody: {
     flex: 1,
@@ -3670,35 +3782,35 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tablaRow: {
     display: 'flex',
-    padding: '14px 16px',
+    padding: '5px 14px',
     borderBottom: '1px solid #f3f4f6',
-    fontSize: '17px',
+    fontSize: '13.5px',
     color: '#111827',
     alignItems: 'center'
   },
   inputCantidad: {
     width: '100%',
-    padding: '8px 8px',
+    padding: '4px 6px',
     border: '1px solid #e5e7eb',
     borderRadius: '6px',
     textAlign: 'right' as const,
-    fontSize: '17px',
+    fontSize: '13.5px',
     outline: 'none'
   },
   botonEliminar: {
-    width: '32px',
-    height: '32px',
+    width: '26px',
+    height: '26px',
     backgroundColor: '#fee2e2',
     border: 'none',
     borderRadius: '6px',
     cursor: 'pointer',
     color: '#dc2626',
     fontWeight: '700',
-    fontSize: '15px'
+    fontSize: '13px'
   },
   footer: {
     backgroundColor: 'white',
-    padding: '16px 20px',
+    padding: '8px 18px',
     borderRadius: '12px',
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #e5e7eb',
@@ -3709,47 +3821,47 @@ const styles: Record<string, React.CSSProperties> = {
   },
   totalContainer: {
     display: 'flex',
-    gap: '40px'
+    gap: '28px'
   },
   totalLabel: {
-    fontSize: '15px',
+    fontSize: '11px',
     color: '#6b7280',
     display: 'block',
-    marginBottom: '4px'
+    marginBottom: '1px'
   },
   totalValor: {
-    fontSize: '32px',
+    fontSize: '22px',
     fontWeight: '700',
     color: '#059669'
   },
   totalValorBs: {
-    fontSize: '32px',
+    fontSize: '22px',
     fontWeight: '700',
     color: '#2563eb'
   },
   botonesFooter: {
     display: 'flex',
-    gap: '12px'
+    gap: '8px'
   },
   botonCancelar: {
     backgroundColor: 'white',
     color: '#6b7280',
     border: '1px solid #e5e7eb',
-    padding: '14px 28px',
-    borderRadius: '10px',
+    padding: '9px 18px',
+    borderRadius: '9px',
     cursor: 'pointer',
     fontWeight: '600',
-    fontSize: '16px'
+    fontSize: '13.5px'
   },
   botonCobrar: {
     backgroundColor: '#059669',
     color: 'white',
     border: 'none',
-    padding: '14px 40px',
-    borderRadius: '10px',
+    padding: '9px 26px',
+    borderRadius: '9px',
     cursor: 'pointer',
     fontWeight: '700',
-    fontSize: '17px',
+    fontSize: '14.5px',
     boxShadow: '0 4px 12px rgba(5, 150, 105, 0.3)'
   },
   modal: {
@@ -4005,3 +4117,103 @@ const estilosEditar: Record<string, React.CSSProperties> = {
     boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)',
   },
 }
+
+const estilosTickets: Record<string, React.CSSProperties> = {
+  barra: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '2px 14px',
+    background: 'linear-gradient(#f9fafb, #f3f4f6)',
+    borderBottom: '1px solid #e5e7eb',
+  },
+  lista: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    overflowX: 'auto' as const,
+    flex: 1,
+  },
+  pestana: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '2px 5px 2px 9px',
+    background: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '7px',
+    cursor: 'pointer',
+    fontSize: '11.5px',
+    fontWeight: '600' as const,
+    color: '#6b7280',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
+    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+  },
+  pestanaActiva: {
+    background: '#2563eb',
+    color: 'white',
+    borderColor: '#2563eb',
+    boxShadow: '0 4px 10px rgba(37, 99, 235, 0.25)',
+  },
+  punto: {
+    width: '5px',
+    height: '5px',
+    borderRadius: '50%',
+    background: '#d1d5db',
+    flexShrink: 0,
+    display: 'inline-block',
+  },
+  puntoActivo: {
+    background: '#93c5fd',
+  },
+  texto: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+  },
+  contador: {
+    background: 'rgba(0,0,0,0.08)',
+    color: 'inherit',
+    fontSize: '10px',
+    fontWeight: '700' as const,
+    padding: '0px 6px',
+    borderRadius: '999px',
+  },
+  contadorActivo: {
+    background: 'rgba(255,255,255,0.22)',
+  },
+  cerrar: {
+    border: 'none',
+    background: 'transparent',
+    color: 'inherit',
+    opacity: 0.6,
+    cursor: 'pointer',
+    fontSize: '11px',
+    lineHeight: 1,
+    width: '16px',
+    height: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+  },
+  agregar: {
+    width: '22px',
+    height: '22px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px solid #d1d5db',
+    borderRadius: '7px',
+    background: 'white',
+    color: '#4b5563',
+    fontWeight: '700' as const,
+    fontSize: '14px',
+    lineHeight: 1,
+    cursor: 'pointer',
+    flexShrink: 0,
+    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+  },
+}
+
